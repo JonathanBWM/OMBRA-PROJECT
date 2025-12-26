@@ -1,0 +1,335 @@
+{
+  "driver": {
+    "name": "Ld9BoxSup.sys",
+    "true_identity": "VBoxDrv.sys / SUPDrv",
+    "version": "6.1.36",
+    "device_path": "\\\\.\\Ld9BoxSup",
+    "signer": "Shanghai Yiyu Network Technology Co., Ltd."
+  },
+  
+  "ioctl_base": {
+    "FILE_DEVICE_UNKNOWN": "0x22",
+    "METHOD_BUFFERED": "0",
+    "FILE_WRITE_ACCESS": "0x2",
+    "SUP_CTL_CODE_macro": "CTL_CODE(FILE_DEVICE_UNKNOWN, 0xA00 + n, METHOD_BUFFERED, FILE_WRITE_ACCESS)"
+  },
+  
+  "ioctls": {
+    "SUP_IOCTL_COOKIE": {
+      "code": "0x22A000",
+      "function_number": 0,
+      "description": "Establish session with driver, exchange version info",
+      "input": {
+        "struct": "SUPCOOKIE_IN",
+        "fields": {
+          "szMagic": "char[16] — Must be 'The Magic Word!'",
+          "u32ReqVersion": "uint32_t — Requested interface version"
+        }
+      },
+      "output": {
+        "struct": "SUPCOOKIE_OUT", 
+        "fields": {
+          "u32Cookie": "uint32_t — Session cookie (save this)",
+          "u32SessionCookie": "uint32_t — Session-specific cookie",
+          "u32SessionVersion": "uint32_t — Interface version",
+          "u32DriverVersion": "uint32_t — Driver version",
+          "pSession": "void* — Session handle",
+          "cFunctions": "uint32_t — Number of functions"
+        }
+      },
+      "usage": "Must be called first to establish session. Save cookies for subsequent calls.",
+      "example": "See generate_ioctl_wrapper('SUP_IOCTL_COOKIE')"
+    },
+    
+    "SUP_IOCTL_LDR_OPEN": {
+      "code": "0x22A004",
+      "function_number": 1,
+      "description": "Open/prepare a Ring-0 module for loading",
+      "input": {
+        "struct": "SUPLDROPEN_IN",
+        "fields": {
+          "cbImageWithEverything": "uint32_t — Total image size",
+          "cbImageBits": "uint32_t — Size of image bits",
+          "szName": "char[32] — Module name",
+          "szFilename": "char[260] — File path"
+        }
+      },
+      "output": {
+        "struct": "SUPLDROPEN_OUT",
+        "fields": {
+          "pvImageBase": "void* — Allocated image base address"
+        }
+      }
+    },
+    
+    "SUP_IOCTL_LDR_LOAD": {
+      "code": "0x22A008", 
+      "function_number": 2,
+      "description": "Load Ring-0 module into kernel",
+      "input": {
+        "struct": "SUPLDRLOAD_IN",
+        "fields": {
+          "pvImageBase": "void* — Image base from LDR_OPEN",
+          "EP": "void* — Entry point",
+          "offStrTab": "uint32_t — String table offset",
+          "cbStrTab": "uint32_t — String table size",
+          "offSymbols": "uint32_t — Symbol table offset",
+          "cSymbols": "uint32_t — Symbol count",
+          "abImage": "uint8_t[] — Image data"
+        }
+      },
+      "output": {
+        "struct": "SUPLDRLOAD_OUT",
+        "fields": {
+          "pvMod": "void* — Module handle"
+        }
+      },
+      "notes": "This is how you inject Ring-0 code"
+    },
+    
+    "SUP_IOCTL_LDR_FREE": {
+      "code": "0x22A00C",
+      "function_number": 3,
+      "description": "Free/unload Ring-0 module"
+    },
+    
+    "SUP_IOCTL_LDR_GET_SYMBOL": {
+      "code": "0x22A010",
+      "function_number": 4,
+      "description": "Resolve kernel symbol address",
+      "input": {
+        "fields": {
+          "szSymbol": "char[128] — Symbol name to resolve"
+        }
+      },
+      "output": {
+        "fields": {
+          "pvSymbol": "void* — Symbol address"
+        }
+      },
+      "notes": "Can resolve ntoskrnl exports and loaded module symbols"
+    },
+    
+    "SUP_IOCTL_CONT_ALLOC": {
+      "code": "0x22A014",
+      "function_number": 5,
+      "description": "Allocate physically contiguous memory",
+      "input": {
+        "struct": "SUPCONTALLOC_IN",
+        "fields": {
+          "cPages": "uint32_t — Number of pages"
+        }
+      },
+      "output": {
+        "struct": "SUPCONTALLOC_OUT",
+        "fields": {
+          "pvR3": "void* — Ring-3 mapping",
+          "pvR0": "void* — Ring-0 mapping", 
+          "HCPhys": "uint64_t — Physical address"
+        }
+      },
+      "notes": "CRITICAL: Use for VMXON regions, VMCS regions, EPT tables. All require physical address."
+    },
+    
+    "SUP_IOCTL_CONT_FREE": {
+      "code": "0x22A018",
+      "function_number": 6,
+      "description": "Free contiguous memory allocation"
+    },
+    
+    "SUP_IOCTL_LOW_ALLOC": {
+      "code": "0x22A01C",
+      "function_number": 7,
+      "description": "Allocate memory below 4GB",
+      "notes": "Useful for 32-bit compatible structures"
+    },
+    
+    "SUP_IOCTL_LOW_FREE": {
+      "code": "0x22A020",
+      "function_number": 8,
+      "description": "Free low memory allocation"
+    },
+    
+    "SUP_IOCTL_GIP_MAP": {
+      "code": "0x22A024",
+      "function_number": 9,
+      "description": "Map Global Info Page (timing data)"
+    },
+    
+    "SUP_IOCTL_PAGE_ALLOC_EX": {
+      "code": "0x22A028",
+      "function_number": 10,
+      "description": "Allocate non-paged kernel memory with options",
+      "input": {
+        "fields": {
+          "cPages": "uint32_t — Number of pages",
+          "fKernelMapping": "bool — Create kernel mapping",
+          "fUserMapping": "bool — Create user mapping",
+          "fReserved": "bool — Reserved",
+          "fInterProcShared": "bool — Share between processes"
+        }
+      },
+      "output": {
+        "fields": {
+          "pvR3": "void* — User-mode mapping",
+          "pvR0": "void* — Kernel-mode mapping",
+          "paPages": "uint64_t[] — Physical addresses of each page"
+        }
+      },
+      "notes": "More flexible than CONT_ALLOC, but pages may not be contiguous"
+    },
+    
+    "SUP_IOCTL_PAGE_MAP_KERNEL": {
+      "code": "0x22A02C",
+      "function_number": 11,
+      "description": "Map pages into kernel address space"
+    },
+    
+    "SUP_IOCTL_PAGE_PROTECT": {
+      "code": "0x22A030",
+      "function_number": 12,
+      "description": "Change page protection"
+    },
+    
+    "SUP_IOCTL_PAGE_FREE": {
+      "code": "0x22A034",
+      "function_number": 13,
+      "description": "Free page allocation"
+    },
+    
+    "SUP_IOCTL_CALL_VMMR0": {
+      "code": "0x22A03C",
+      "function_number": 15,
+      "description": "Execute function in Ring-0 context",
+      "input": {
+        "fields": {
+          "pVMR0": "void* — VM handle (can be NULL)",
+          "idCpu": "uint32_t — Target CPU (-1 for current)",
+          "uOperation": "uint32_t — Operation code",
+          "pvArg": "void* — Argument pointer",
+          "cbArg": "uint32_t — Argument size"
+        }
+      },
+      "notes": "CRITICAL: This is your entry point for executing hypervisor code at Ring-0"
+    },
+    
+    "SUP_IOCTL_PAGE_LOCK": {
+      "code": "0x22A048",
+      "function_number": 18,
+      "description": "Lock pages in memory (prevent paging)"
+    },
+    
+    "SUP_IOCTL_PAGE_UNLOCK": {
+      "code": "0x22A04C",
+      "function_number": 19,
+      "description": "Unlock pages"
+    },
+    
+    "SUP_IOCTL_VT_CAPS": {
+      "code": "0x22A050",
+      "function_number": 20,
+      "description": "Query VT-x/AMD-V capabilities",
+      "output": {
+        "fields": {
+          "fCaps": "uint32_t — Capability flags"
+        }
+      },
+      "notes": "Use to check VMX support before attempting VMXON"
+    },
+    
+    "SUP_IOCTL_GET_HWVIRT_MSRS": {
+      "code": "0x22A054",
+      "function_number": 21,
+      "description": "Get hardware virtualization MSRs",
+      "output": {
+        "fields": {
+          "u64MsrFeatCtrl": "uint64_t — IA32_FEATURE_CONTROL",
+          "u64VmxBasic": "uint64_t — IA32_VMX_BASIC",
+          "u64VmxPinCtls": "uint64_t — IA32_VMX_PINBASED_CTLS",
+          "u64VmxProcCtls": "uint64_t — IA32_VMX_PROCBASED_CTLS",
+          "u64VmxProcCtls2": "uint64_t — IA32_VMX_PROCBASED_CTLS2",
+          "u64VmxExitCtls": "uint64_t — IA32_VMX_EXIT_CTLS",
+          "u64VmxEntryCtls": "uint64_t — IA32_VMX_ENTRY_CTLS",
+          "u64VmxMisc": "uint64_t — IA32_VMX_MISC",
+          "u64VmxCr0Fixed0": "uint64_t — IA32_VMX_CR0_FIXED0",
+          "u64VmxCr0Fixed1": "uint64_t — IA32_VMX_CR0_FIXED1",
+          "u64VmxCr4Fixed0": "uint64_t — IA32_VMX_CR4_FIXED0",
+          "u64VmxCr4Fixed1": "uint64_t — IA32_VMX_CR4_FIXED1",
+          "u64VmxVmcsEnum": "uint64_t — IA32_VMX_VMCS_ENUM",
+          "u64VmxEptVpidCap": "uint64_t — IA32_VMX_EPT_VPID_CAP"
+        }
+      },
+      "notes": "CRITICAL: Use these values to configure VMCS controls properly"
+    },
+    
+    "SUP_IOCTL_MSR_PROBER": {
+      "code": "0x22A068",
+      "function_number": 26,
+      "description": "Read/Write/Modify arbitrary MSRs",
+      "input": {
+        "fields": {
+          "uMsr": "uint32_t — MSR number",
+          "idCpu": "uint32_t — Target CPU",
+          "uOp": "uint32_t — Operation (0=read, 1=write, 2=modify)",
+          "u64In": "uint64_t — Value for write",
+          "u64AndMask": "uint64_t — AND mask for modify",
+          "u64OrMask": "uint64_t — OR mask for modify"
+        }
+      },
+      "output": {
+        "fields": {
+          "u64Out": "uint64_t — Read value"
+        }
+      },
+      "notes": "Direct MSR access. Use carefully — can crash system."
+    },
+    
+    "SUP_IOCTL_TSC_DELTA_MEASURE": {
+      "code": "0x22A05C",
+      "function_number": 23,
+      "description": "Measure TSC delta between CPUs"
+    }
+  },
+  
+  "workflow": {
+    "step1": {
+      "action": "Establish session",
+      "ioctl": "SUP_IOCTL_COOKIE",
+      "code": "DeviceIoControl(hDevice, 0x22A000, &in, sizeof(in), &out, sizeof(out), &bytes, NULL);"
+    },
+    "step2": {
+      "action": "Query VMX capabilities",
+      "ioctl": "SUP_IOCTL_GET_HWVIRT_MSRS",
+      "code": "Use returned MSR values to calculate valid VMCS control settings"
+    },
+    "step3": {
+      "action": "Allocate VMXON regions",
+      "ioctl": "SUP_IOCTL_CONT_ALLOC",
+      "code": "Request 4KB × NumCPUs, save physical addresses"
+    },
+    "step4": {
+      "action": "Allocate VMCS regions", 
+      "ioctl": "SUP_IOCTL_CONT_ALLOC",
+      "code": "Request 4KB × NumCPUs, save physical addresses"
+    },
+    "step5": {
+      "action": "Allocate EPT tables",
+      "ioctl": "SUP_IOCTL_CONT_ALLOC",
+      "code": "Request ~2MB for identity map, save physical addresses"
+    },
+    "step6": {
+      "action": "Allocate hypervisor code + stacks",
+      "ioctl": "SUP_IOCTL_PAGE_ALLOC_EX",
+      "code": "Allocate non-paged memory for your hypervisor"
+    },
+    "step7": {
+      "action": "Copy hypervisor code to kernel memory",
+      "method": "memcpy to pvR3 mapping from step 6"
+    },
+    "step8": {
+      "action": "Execute hypervisor entry point",
+      "ioctl": "SUP_IOCTL_CALL_VMMR0",
+      "code": "Call entry() which performs per-CPU VMXON/VMLAUNCH"
+    }
+  }
+}

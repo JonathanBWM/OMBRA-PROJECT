@@ -1,0 +1,40 @@
+
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Version 17
+VisualStudioVersion = 17.4.33122.133
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "Pdbparser", "Pdbparser\Pdbparser.vcxproj", "{E00C691A-12FF-45E0-AC0A-4CC80DAD2D78}"
+EndProject
+Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "OmbraCoreLib-v", "OmbraCoreLib-v\OmbraCoreLib-v.vcxproj", "{64D50B5F-55D6-4F58-B6A8-0BF0D40B1500}"
+	ProjectSection(ProjectDependencies) = postProject
+		{780FD52C-B046-4AFF-95F9-F6778247D26E} = {780FD52C-B046-4AFF-95F9-F6778247D26E}
+	EndProjectSection
+EndProject
+Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "OmbraCoreLib", "OmbraCoreLib\OmbraCoreLib.vcxproj", "{780FD52C-B046-4AFF-95F9-F6778247D26E}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Release|x64 = Release|x64
+		ReleaseWithSpoofer|x64 = ReleaseWithSpoofer|x64
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{E00C691A-12FF-45E0-AC0A-4CC80DAD2D78}.Release|x64.ActiveCfg = Release|x64
+		{E00C691A-12FF-45E0-AC0A-4CC80DAD2D78}.Release|x64.Build.0 = Release|x64
+		{E00C691A-12FF-45E0-AC0A-4CC80DAD2D78}.ReleaseWithSpoofer|x64.ActiveCfg = ReleaseWithSpoofer|x64
+		{E00C691A-12FF-45E0-AC0A-4CC80DAD2D78}.ReleaseWithSpoofer|x64.Build.0 = ReleaseWithSpoofer|x64
+		{64D50B5F-55D6-4F58-B6A8-0BF0D40B1500}.Release|x64.ActiveCfg = Release|x64
+		{64D50B5F-55D6-4F58-B6A8-0BF0D40B1500}.Release|x64.Build.0 = Release|x64
+		{64D50B5F-55D6-4F58-B6A8-0BF0D40B1500}.ReleaseWithSpoofer|x64.ActiveCfg = Release|x64
+		{64D50B5F-55D6-4F58-B6A8-0BF0D40B1500}.ReleaseWithSpoofer|x64.Build.0 = Release|x64
+		{780FD52C-B046-4AFF-95F9-F6778247D26E}.Release|x64.ActiveCfg = Release|x64
+		{780FD52C-B046-4AFF-95F9-F6778247D26E}.Release|x64.Build.0 = Release|x64
+		{780FD52C-B046-4AFF-95F9-F6778247D26E}.ReleaseWithSpoofer|x64.ActiveCfg = ReleaseWithSpoofer|x64
+		{780FD52C-B046-4AFF-95F9-F6778247D26E}.ReleaseWithSpoofer|x64.Build.0 = ReleaseWithSpoofer|x64
+	EndGlobalSection
+	GlobalSection(SolutionProperties) = preSolution
+		HideSolutionNode = FALSE
+	EndGlobalSection
+	GlobalSection(ExtensibilityGlobals) = postSolution
+		SolutionGuid = {80EEFEA5-C8AE-4027-83B3-0486AEFFCB23}
+	EndGlobalSection
+EndGlobal

@@ -1,0 +1,44 @@
+name: Build OmbraHypervisor
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Setup MSBuild
+      uses: microsoft/setup-msbuild@v2
+
+    - name: Build usermode
+      shell: cmd
+      run: |
+        call "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvars64.bat"
+        cd hypervisor\usermode
+        cl.exe /O2 /W4 /Fe:loader.exe main.c driver_interface.c payload_loader.c /link
+
+    - name: Build hypervisor core  
+      shell: cmd
+      run: |
+        call "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvars64.bat"
+        cd hypervisor\hypervisor
+        ml64.exe /c /Fo:asm\vmexit.obj asm\vmexit.asm
+        ml64.exe /c /Fo:asm\intrinsics.obj asm\intrinsics.asm  
+        ml64.exe /c /Fo:asm\segment.obj asm\segment.asm
+        cl.exe /c /O2 /W4 /I..\shared entry.c vmx.c vmcs.c ept.c exit_dispatch.c timing.c
+        cl.exe /c /O2 /W4 /I..\shared handlers\*.c
+        lib.exe /OUT:hypervisor.lib *.obj asm\*.obj
+
+    - name: Upload artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: ombra-${{ github.sha }}
+        path: |
+          hypervisor/usermode/*.exe
+          hypervisor/hypervisor/*.lib

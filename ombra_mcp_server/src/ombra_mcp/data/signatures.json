@@ -1,0 +1,191 @@
+{
+  "description": "Known hypervisor signatures to avoid — patterns detected by anti-cheats",
+  "version": "1.0.0",
+  "last_updated": "2025-12-25",
+  
+  "string_signatures": [
+    {
+      "source": "HyperPlatform",
+      "pattern": "HyperPlatform",
+      "context": "Debug strings",
+      "risk": "high"
+    },
+    {
+      "source": "HyperPlatform", 
+      "pattern": "Virtualized processor %d",
+      "context": "Debug logging",
+      "risk": "high"
+    },
+    {
+      "source": "SimpleSvm",
+      "pattern": "SimpleSvm",
+      "context": "Debug strings",
+      "risk": "high"
+    },
+    {
+      "source": "Voyager",
+      "pattern": "voyager",
+      "context": "Module name",
+      "risk": "high"
+    },
+    {
+      "source": "gbhv",
+      "pattern": "GoodBye",
+      "context": "CPUID vendor string",
+      "risk": "critical"
+    },
+    {
+      "source": "Multiple",
+      "pattern": "YOURH YPERvisor",
+      "context": "CPUID hypervisor vendor",
+      "risk": "critical"
+    },
+    {
+      "source": "Multiple",
+      "pattern": "Hypervisor",
+      "context": "Generic detection string",
+      "risk": "medium"
+    }
+  ],
+  
+  "code_patterns": [
+    {
+      "source": "HyperPlatform",
+      "description": "Sequential CPU virtualization with logging",
+      "pattern_type": "control_flow",
+      "signature": "for_each_cpu { log(cpu); vmlaunch; }",
+      "risk": "high",
+      "mitigation": "Silent operation, no logging during virtualization"
+    },
+    {
+      "source": "SimpleSvm",
+      "description": "Inline VMCS setup in single function",
+      "pattern_type": "code_structure",
+      "signature": "single_function_vmcs_setup > 500_lines",
+      "risk": "medium",
+      "mitigation": "Split into multiple functions with different call patterns"
+    },
+    {
+      "source": "Multiple",
+      "description": "Standard EPT identity map allocation",
+      "pattern_type": "memory",
+      "signature": "sequential_physical_pages_for_ept",
+      "risk": "medium",
+      "mitigation": "Randomize EPT structure allocation, use non-contiguous pages"
+    },
+    {
+      "source": "Multiple",
+      "description": "VMXON region at predictable offset from VMCS",
+      "pattern_type": "memory",
+      "signature": "vmxon_adjacent_to_vmcs",
+      "risk": "medium",
+      "mitigation": "Randomize allocation order and offsets"
+    },
+    {
+      "source": "Multiple",
+      "description": "Standard exit handler switch statement",
+      "pattern_type": "code_structure",
+      "signature": "switch(exit_reason) { case 0: ... case 65: }",
+      "risk": "low",
+      "mitigation": "Use function pointer table, obfuscate dispatch"
+    }
+  ],
+  
+  "pool_tags": [
+    {
+      "tag": "HvPl",
+      "source": "HyperPlatform",
+      "risk": "critical"
+    },
+    {
+      "tag": "SSvm",
+      "source": "SimpleSvm", 
+      "risk": "critical"
+    },
+    {
+      "tag": "Vgr ",
+      "source": "Voyager",
+      "risk": "critical"
+    },
+    {
+      "tag": "VMXr",
+      "source": "Generic VMX",
+      "risk": "high"
+    },
+    {
+      "tag": "VMCS",
+      "source": "Generic",
+      "risk": "high"
+    },
+    {
+      "tag": "EPT ",
+      "source": "Generic EPT",
+      "risk": "high"
+    }
+  ],
+  
+  "timing_thresholds": {
+    "cpuid_rdtsc": {
+      "normal_min": 20,
+      "normal_max": 100,
+      "detection_threshold": 150,
+      "notes": "Anti-cheats measure CPUID execution time via RDTSC sandwich"
+    },
+    "rdtsc_delta": {
+      "normal_min": 10,
+      "normal_max": 40,
+      "detection_threshold": 100,
+      "notes": "Back-to-back RDTSC should have minimal delta"
+    },
+    "vmcall_timing": {
+      "expected_if_no_hv": "GP_FAULT",
+      "detection_method": "Execute VMCALL, measure exception vs success",
+      "notes": "If VMCALL succeeds without GP, hypervisor is present"
+    }
+  },
+  
+  "cpuid_detection": {
+    "leaf_1_ecx_bit31": {
+      "name": "Hypervisor Present",
+      "detection": "If set, hypervisor is present",
+      "mitigation": "Clear this bit in CPUID handler"
+    },
+    "leaf_1_ecx_bit5": {
+      "name": "VMX Available",
+      "detection": "If cleared when should be set, suspicious",
+      "mitigation": "Passthrough or clear consistently"
+    },
+    "leaf_0x40000000": {
+      "name": "Hypervisor Vendor",
+      "detection": "Returns hypervisor vendor string",
+      "mitigation": "Return zeros or max_leaf=0"
+    },
+    "leaf_0x40000001_0x4000000F": {
+      "name": "Hypervisor Features",
+      "detection": "Various hypervisor-specific leaves",
+      "mitigation": "Return zeros for all 0x4000xxxx leaves"
+    }
+  },
+  
+  "msr_detection": {
+    "IA32_VMX_BASIC": {
+      "normal_behavior": "Returns VMX capabilities",
+      "detection": "If accessible from guest, no hypervisor hiding it",
+      "mitigation": "Inject #GP on read"
+    },
+    "IA32_FEATURE_CONTROL": {
+      "normal_behavior": "Shows VMX enable status",
+      "detection": "If VMX enabled but CPUID.VMX=0, suspicious",
+      "mitigation": "Keep consistent with CPUID spoofing"
+    }
+  },
+  
+  "recommendations": {
+    "pool_tags": "Use random 4-byte tags, avoid any VMX/hypervisor related strings",
+    "strings": "No debug strings in release build, strip all symbols",
+    "timing": "Accumulate TSC offset for ALL timing-related exits",
+    "cpuid": "Consistently hide hypervisor across all detection leaves",
+    "memory": "Randomize all allocation addresses and sizes",
+    "code": "Write unique code patterns, don't copy public implementations"
+  }
+}

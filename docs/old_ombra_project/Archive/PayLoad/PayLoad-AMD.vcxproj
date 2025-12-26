@@ -1,0 +1,147 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project DefaultTargets="Build" ToolsVersion="12.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup Label="ProjectConfigurations">
+    <ProjectConfiguration Include="ReleaseWithSpoofer|x64">
+      <Configuration>ReleaseWithSpoofer</Configuration>
+      <Platform>x64</Platform>
+    </ProjectConfiguration>
+    <ProjectConfiguration Include="Release|x64">
+      <Configuration>Release</Configuration>
+      <Platform>x64</Platform>
+    </ProjectConfiguration>
+  </ItemGroup>
+  <PropertyGroup Label="Globals">
+    <ProjectGuid>{A1B2C3D4-E5F6-4789-ABCD-EF0123456789}</ProjectGuid>
+    <TemplateGuid>{1bc93793-694f-48fe-9372-81e2b05556fd}</TemplateGuid>
+    <TargetFrameworkVersion>v4.5</TargetFrameworkVersion>
+    <MinimumVisualStudioVersion>12.0</MinimumVisualStudioVersion>
+    <Configuration>Release</Configuration>
+    <Platform Condition="'$(Platform)' == ''">x64</Platform>
+    <RootNamespace>PayLoadAMD</RootNamespace>
+    <ProjectName>PayLoad-AMD</ProjectName>
+    <WindowsTargetPlatformVersion>10.0.22621.0</WindowsTargetPlatformVersion>
+  </PropertyGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props" />
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'" Label="Configuration">
+    <TargetVersion>Windows10</TargetVersion>
+    <UseDebugLibraries>false</UseDebugLibraries>
+    <PlatformToolset>v143</PlatformToolset>
+    <ConfigurationType>DynamicLibrary</ConfigurationType>
+    <DriverType>KMDF</DriverType>
+    <DriverTargetPlatform>Universal</DriverTargetPlatform>
+    <Driver_SpectreMitigation>false</Driver_SpectreMitigation>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='ReleaseWithSpoofer|x64'" Label="Configuration">
+    <TargetVersion>Windows10</TargetVersion>
+    <UseDebugLibraries>false</UseDebugLibraries>
+    <PlatformToolset>v143</PlatformToolset>
+    <ConfigurationType>DynamicLibrary</ConfigurationType>
+    <DriverType>KMDF</DriverType>
+    <DriverTargetPlatform>Universal</DriverTargetPlatform>
+    <Driver_SpectreMitigation>false</Driver_SpectreMitigation>
+  </PropertyGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.props" />
+  <ImportGroup Label="ExtensionSettings">
+    <Import Project="$(VCTargetsPath)\BuildCustomizations\masm.props" />
+  </ImportGroup>
+  <ImportGroup Label="PropertySheets">
+    <Import Project="$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props" Condition="exists('$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props')" Label="LocalAppDataPlatform" />
+  </ImportGroup>
+  <PropertyGroup Label="UserMacros" />
+  <PropertyGroup />
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
+    <DebuggerFlavor>DbgengKernelDebugger</DebuggerFlavor>
+    <EnableInf2cat>false</EnableInf2cat>
+    <IntDir>$(Platform)\$(Configuration)\AMD\</IntDir>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='ReleaseWithSpoofer|x64'">
+    <DebuggerFlavor>DbgengKernelDebugger</DebuggerFlavor>
+    <EnableInf2cat>false</EnableInf2cat>
+    <IntDir>$(Platform)\$(Configuration)\AMD\</IntDir>
+  </PropertyGroup>
+  <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
+    <ClCompile>
+      <LanguageStandard>stdcpp17</LanguageStandard>
+      <BufferSecurityCheck>false</BufferSecurityCheck>
+      <ControlFlowGuard>false</ControlFlowGuard>
+      <TreatWarningAsError>false</TreatWarningAsError>
+      <PreprocessorDefinitions>AMD_BUILD;_SVM_CORE;_KERNEL_MODE;_VMXROOT_MODE;_WIN64;_AMD64_;AMD64;%(PreprocessorDefinitions);</PreprocessorDefinitions>
+      <Optimization>Disabled</Optimization>
+      <RuntimeLibrary>MultiThreaded</RuntimeLibrary>
+      <ExceptionHandling>false</ExceptionHandling>
+      <AdditionalIncludeDirectories>$(ProjectDir)include;$(ProjectDir)core;$(SolutionDir);$(SolutionDir)OmbraShared;$(SolutionDir)OmbraCoreLib/OmbraCoreLib/include</AdditionalIncludeDirectories>
+      <AdditionalOptions>/Zc:threadSafeInit- /Zc:tlsGuards- </AdditionalOptions>
+    </ClCompile>
+    <Link>
+      <EntryPointSymbol>OmbraAmdEntry</EntryPointSymbol>
+      <IgnoreAllDefaultLibraries>true</IgnoreAllDefaultLibraries>
+      <AdditionalDependencies>%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalLibraryDirectories>$(SolutionDir)$(Platform)\$(Configuration)\</AdditionalLibraryDirectories>
+      <SectionAlignment>2097152</SectionAlignment>
+      <LinkTimeCodeGeneration>Default</LinkTimeCodeGeneration>
+    </Link>
+  </ItemDefinitionGroup>
+  <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='ReleaseWithSpoofer|x64'">
+    <ClCompile>
+      <LanguageStandard>stdcpp17</LanguageStandard>
+      <BufferSecurityCheck>false</BufferSecurityCheck>
+      <ControlFlowGuard>false</ControlFlowGuard>
+      <TreatWarningAsError>false</TreatWarningAsError>
+      <PreprocessorDefinitions>AMD_BUILD;_SVM_CORE;_KERNEL_MODE;_VMXROOT_MODE;_WIN64;_AMD64_;AMD64;%(PreprocessorDefinitions);</PreprocessorDefinitions>
+      <Optimization>Disabled</Optimization>
+      <RuntimeLibrary>MultiThreaded</RuntimeLibrary>
+      <ExceptionHandling>false</ExceptionHandling>
+      <AdditionalIncludeDirectories>$(ProjectDir)include;$(ProjectDir)core;$(SolutionDir);$(SolutionDir)OmbraShared;$(SolutionDir)OmbraCoreLib/OmbraCoreLib/include</AdditionalIncludeDirectories>
+      <AdditionalOptions>/Zc:threadSafeInit- /Zc:tlsGuards- </AdditionalOptions>
+    </ClCompile>
+    <Link>
+      <EntryPointSymbol>OmbraAmdEntry</EntryPointSymbol>
+      <IgnoreAllDefaultLibraries>true</IgnoreAllDefaultLibraries>
+      <AdditionalDependencies>%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalLibraryDirectories>$(SolutionDir)$(Platform)\$(Configuration)\</AdditionalLibraryDirectories>
+      <SectionAlignment>2097152</SectionAlignment>
+      <LinkTimeCodeGeneration>Default</LinkTimeCodeGeneration>
+    </Link>
+  </ItemDefinitionGroup>
+  <ItemGroup>
+    <FilesToPackage Include="$(TargetPath)" />
+  </ItemGroup>
+  <!-- Include Headers -->
+  <ItemGroup>
+    <ClInclude Include="include\types.h" />
+    <ClInclude Include="include\vmcall.h" />
+    <ClInclude Include="include\storage.h" />
+    <ClInclude Include="include\context.h" />
+    <ClInclude Include="include\gpr.h" />
+    <ClInclude Include="include\timing.h" />
+    <ClInclude Include="core\dispatch.h" />
+    <ClInclude Include="core\cpuid_spoof.h" />
+    <ClInclude Include="amd\svm_handler.h" />
+    <ClInclude Include="amd\mm.h" />
+    <ClInclude Include="amd\exception.h" />
+    <ClInclude Include="amd\debug.h" />
+  </ItemGroup>
+  <!-- Core Implementation (shared) -->
+  <ItemGroup>
+    <ClCompile Include="core\dispatch.cpp" />
+    <ClCompile Include="core\storage.cpp" />
+    <ClCompile Include="core\cpuid_spoof.cpp" />
+    <ClCompile Include="core\timing.cpp" />
+  </ItemGroup>
+  <!-- AMD Backend -->
+  <ItemGroup>
+    <ClCompile Include="amd\svm_handler.cpp" />
+    <ClCompile Include="amd\mm.cpp" />
+    <ClCompile Include="amd\exception.cpp" />
+    <ClCompile Include="amd\debug.cpp" />
+    <ClCompile Include="amd\entry.cpp" />
+  </ItemGroup>
+  <!-- AMD Assembly -->
+  <ItemGroup>
+    <MASM Include="amd\IDT.asm" />
+  </ItemGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
+  <ImportGroup Label="ExtensionTargets">
+    <Import Project="$(VCTargetsPath)\BuildCustomizations\masm.targets" />
+  </ImportGroup>
+</Project>

@@ -1,0 +1,413 @@
+{
+  "timing_detection": {
+    "rdtsc_delta": {
+      "description": "CPUID timing measurement using RDTSC",
+      "technique": "Measure cycles for CPUID execution, VM-exits add ~1000+ cycles",
+      "threshold_safe": 50,
+      "threshold_warning": 100,
+      "threshold_detected": 150,
+      "unit": "cycles",
+      "mitigation": {
+        "approach": "TSC offset accumulation with per-exit tracking",
+        "notes": [
+          "Track offset per-CPU, not globally",
+          "Ensure monotonically increasing TSC",
+          "Account for ALL exit types that could be timed",
+          "Use rolling average for CPUID overhead"
+        ]
+      }
+    },
+    "rdtscp_delta": {
+      "description": "RDTSCP timing with processor ID",
+      "technique": "Same as RDTSC but includes TSC_AUX check",
+      "threshold_safe": 50,
+      "threshold_warning": 100,
+      "threshold_detected": 150,
+      "unit": "cycles",
+      "mitigation": {
+        "approach": "Virtualize IA32_TSC_AUX MSR, offset compensation",
+        "msr": "0xC0000103",
+        "notes": [
+          "TSC_AUX contains processor ID on some systems",
+          "Must match expected CPU core numbering"
+        ]
+      }
+    },
+    "aperf_mperf_ratio": {
+      "description": "CPU frequency detection via APERF/MPERF MSRs",
+      "technique": "Compare APERF/MPERF ratio to expected CPU frequency",
+      "msrs": ["0xE7", "0xE8"],
+      "mitigation": {
+        "approach": "Virtualize APERF/MPERF to maintain consistent ratio",
+        "notes": [
+          "Ratio should match nominal CPU frequency",
+          "Inconsistencies reveal VM-exit overhead"
+        ]
+      }
+    },
+    "vmexit_timing": {
+      "description": "Measure any instruction that causes VM-exit",
+      "technique": "CPUID, RDMSR on VMX MSRs, port I/O timing",
+      "threshold_safe": 100,
+      "threshold_warning": 200,
+      "threshold_detected": 500,
+      "mitigation": {
+        "approach": "Reduce exit frequency, inline handlers, timing compensation",
+        "notes": [
+          "Minimize unconditional exits",
+          "Use MSR bitmap to reduce MSR exits",
+          "Use I/O bitmap to reduce port exits"
+        ]
+      }
+    },
+    "exception_timing": {
+      "description": "Measure exception delivery timing",
+      "technique": "Trigger #UD or #GP and measure delivery time",
+      "threshold_safe": 200,
+      "threshold_detected": 500,
+      "mitigation": {
+        "approach": "Use hardware injection, minimize emulation",
+        "notes": [
+          "Use VM-entry event injection for fast delivery",
+          "Don't emulate exception delivery in software"
+        ]
+      }
+    },
+    "nmi_timing": {
+      "description": "NMI delivery timing measurement",
+      "technique": "Trigger NMI and measure handling time",
+      "threshold_safe": 100,
+      "threshold_detected": 300,
+      "mitigation": {
+        "approach": "Immediate NMI injection with minimal processing",
+        "notes": [
+          "NMI exits are unconditional - can't avoid",
+          "Must handle quickly and inject back to guest"
+        ]
+      }
+    }
+  },
+
+  "cpuid_detection": {
+    "hypervisor_bit": {
+      "leaf": "0x00000001",
+      "register": "ECX",
+      "bit": 31,
+      "description": "CPUID.1:ECX[31] - Hypervisor Present Bit",
+      "technique": "Check if hypervisor bit is set",
+      "mitigation": {
+        "approach": "Clear ECX[31] in CPUID exit handler",
+        "code_hint": "regs[ECX] &= ~(1 << 31);"
+      }
+    },
+    "hypervisor_vendor": {
+      "leaf": "0x40000000",
+      "description": "CPUID leaf 0x40000000 - Hypervisor Vendor",
+      "technique": "Query hypervisor identification string",
+      "known_strings": [
+        "Microsoft Hv",
+        "VMwareVMware",
+        "XenVMMXenVMM",
+        "KVMKVMKVM",
+        "bhyve bhyve"
+      ],
+      "mitigation": {
+        "approach": "Return zeros or invalid data for leaves 0x40000000-0x4FFFFFFF",
+        "code_hint": "if ((leaf & 0xF0000000) == 0x40000000) { zero all regs; }"
+      }
+    },
+    "hypervisor_features": {
+      "leaves": ["0x40000001", "0x40000002", "0x40000003", "0x40000004", "0x40000005", "0x40000006"],
+      "description": "Hypervisor feature leaves",
+      "technique": "Query hypervisor-specific features and enlightenments",
+      "mitigation": {
+        "approach": "Return zeros for all hypervisor feature leaves",
+        "notes": [
+          "Windows enlightenments at 0x40000001+",
+          "Hyper-V specific features should not be exposed"
+        ]
+      }
+    },
+    "max_leaf": {
+      "leaf": "0x00000000",
+      "register": "EAX",
+      "description": "CPUID.0:EAX - Maximum supported leaf",
+      "technique": "Compare max leaf to expected hardware value",
+      "mitigation": {
+        "approach": "Return genuine hardware max leaf value",
+        "notes": [
+          "Store original max leaf during init",
+          "Return stored value instead of hypervisor's"
+        ]
+      }
+    }
+  },
+
+  "msr_detection": {
+    "vmx_capability_msrs": {
+      "range": ["0x480", "0x491"],
+      "names": [
+        "IA32_VMX_BASIC",
+        "IA32_VMX_PINBASED_CTLS",
+        "IA32_VMX_PROCBASED_CTLS",
+        "IA32_VMX_EXIT_CTLS",
+        "IA32_VMX_ENTRY_CTLS",
+        "IA32_VMX_MISC",
+        "IA32_VMX_CR0_FIXED0",
+        "IA32_VMX_CR0_FIXED1",
+        "IA32_VMX_CR4_FIXED0",
+        "IA32_VMX_CR4_FIXED1",
+        "IA32_VMX_VMCS_ENUM",
+        "IA32_VMX_PROCBASED_CTLS2",
+        "IA32_VMX_EPT_VPID_CAP",
+        "IA32_VMX_TRUE_PINBASED_CTLS",
+        "IA32_VMX_TRUE_PROCBASED_CTLS",
+        "IA32_VMX_TRUE_EXIT_CTLS",
+        "IA32_VMX_TRUE_ENTRY_CTLS",
+        "IA32_VMX_VMFUNC"
+      ],
+      "description": "Read VMX capability MSRs",
+      "technique": "Attempt RDMSR on VMX MSRs, check for #GP or values",
+      "mitigation": {
+        "approach": "Intercept and return 0 or inject #GP",
+        "notes": [
+          "On bare metal without VMX, these inject #GP",
+          "Returning values indicates VMX is active"
+        ]
+      }
+    },
+    "feature_control": {
+      "msr": "0x3A",
+      "name": "IA32_FEATURE_CONTROL",
+      "description": "VMX enable control MSR",
+      "technique": "Check VMX enable bit (bit 2) and lock bit (bit 0)",
+      "mitigation": {
+        "approach": "Shadow MSR with VMX bits cleared",
+        "bits_to_clear": [1, 2],
+        "notes": [
+          "Bit 0: Lock bit",
+          "Bit 1: Enable VMX in SMX",
+          "Bit 2: Enable VMX outside SMX"
+        ]
+      }
+    },
+    "tsc_aux": {
+      "msr": "0xC0000103",
+      "name": "IA32_TSC_AUX",
+      "description": "TSC auxiliary register (processor ID)",
+      "technique": "Compare TSC_AUX across operations",
+      "mitigation": {
+        "approach": "Properly virtualize TSC_AUX with correct CPU ID"
+      }
+    }
+  },
+
+  "memory_detection": {
+    "signature_scan": {
+      "description": "Scan for known hypervisor signatures in memory",
+      "technique": "Search for strings like 'HyperPlatform', 'SimpleSvm', etc.",
+      "known_signatures": [
+        "HyperPlatform",
+        "SimpleSvm",
+        "hvpp",
+        "gbhv",
+        "Voyager",
+        "DdiMon",
+        "HyperHide",
+        "VMXON",
+        "VMCS",
+        "EPT violation"
+      ],
+      "pool_tags": [
+        "HvPl",
+        "SSvm",
+        "VMXr",
+        "EPTP",
+        "VMXN"
+      ],
+      "mitigation": {
+        "approach": "Encrypt strings, use hashes, avoid static signatures",
+        "notes": [
+          "Use compile-time string encryption",
+          "Replace pool tags with generic ones",
+          "XOR or hash sensitive strings"
+        ]
+      }
+    },
+    "pe_header_scan": {
+      "description": "Scan for PE headers (MZ/PE signatures) in pool memory",
+      "technique": "Walk kernel pools looking for 0x5A4D (MZ) and 0x4550 (PE)",
+      "mitigation": {
+        "approach": "Wipe PE headers after driver loading",
+        "notes": [
+          "Use LCG-based random garbage generation",
+          "Iterate until no MZ/PE signatures in garbage",
+          "Wipe in 4KB chunks"
+        ]
+      }
+    },
+    "ept_detection": {
+      "description": "Detect EPT by timing memory accesses",
+      "technique": "Measure TLB miss timing differences",
+      "mitigation": {
+        "approach": "Minimize EPT violations, use large pages",
+        "notes": [
+          "Use 2MB pages where possible",
+          "Reduce EPT violation frequency",
+          "Pre-allocate EPT entries"
+        ]
+      }
+    }
+  },
+
+  "behavioral_detection": {
+    "instruction_count": {
+      "description": "PMC-based instruction counting",
+      "technique": "Count instructions across sensitive operations",
+      "mitigation": {
+        "approach": "Virtualize PMCs, adjust counts",
+        "notes": [
+          "IA32_FIXED_CTR0-2 and IA32_PMC0-7",
+          "Difficult to virtualize correctly"
+        ]
+      }
+    },
+    "nested_vmx": {
+      "description": "Attempt VMXON to detect nested virtualization",
+      "technique": "Execute VMXON and check behavior",
+      "mitigation": {
+        "approach": "Inject #GP or implement proper nesting",
+        "notes": [
+          "VMXON fails with #GP if VMX not enabled in CR4",
+          "Or fails with VMfailInvalid if already in VMX root"
+        ]
+      }
+    },
+    "driver_enumeration": {
+      "description": "Walk PsLoadedModuleList for suspicious drivers",
+      "technique": "Enumerate loaded drivers, check for known names",
+      "mitigation": {
+        "approach": "Use manual mapping, avoid driver registration",
+        "notes": [
+          "Manually mapped drivers don't appear in list",
+          "Use vulnerable driver for primitives only"
+        ]
+      }
+    },
+    "piddb_cache": {
+      "description": "Check PiDDBCacheTable for driver load history",
+      "technique": "Windows caches all driver loads even after unload",
+      "mitigation": {
+        "approach": "Clear PiDDBCacheTable entries after mapping",
+        "notes": [
+          "Acquire PiDDBLock (ERESOURCE)",
+          "Find entry in RTL_AVL_TREE",
+          "Unlink from LIST_ENTRY chains",
+          "Delete from tree"
+        ]
+      }
+    }
+  },
+
+  "hardware_spoofing": {
+    "disk_serial": {
+      "description": "Disk serial number detection",
+      "technique": "Query disk IDENTIFY data or SMART",
+      "ioctls": [
+        "IOCTL_ATA_PASS_THROUGH",
+        "IOCTL_STORAGE_QUERY_PROPERTY",
+        "IOCTL_SCSI_PASS_THROUGH"
+      ],
+      "mitigation": {
+        "approach": "Hook storage IOCTLs, return spoofed serial"
+      }
+    },
+    "mac_address": {
+      "description": "Network MAC address detection",
+      "technique": "Query NIC permanent MAC address",
+      "mitigation": {
+        "approach": "Hook NDIS OID requests, spoof OID_802_3_PERMANENT_ADDRESS"
+      }
+    },
+    "smbios": {
+      "description": "SMBIOS table fingerprinting",
+      "technique": "Read SMBIOS tables for hardware IDs",
+      "tables": [
+        "Type 0: BIOS Information",
+        "Type 1: System Information",
+        "Type 2: Baseboard",
+        "Type 3: System Enclosure",
+        "Type 4: Processor"
+      ],
+      "mitigation": {
+        "approach": "Hook GetSystemFirmwareTable, return modified tables"
+      }
+    },
+    "gpu_uuid": {
+      "description": "GPU unique identifier detection",
+      "technique": "Query GPU via DirectX or NVIDIA API",
+      "mitigation": {
+        "approach": "Hook D3D/NVIDIA calls, return spoofed UUID"
+      }
+    },
+    "tpm": {
+      "description": "TPM attestation for system integrity",
+      "technique": "TPM PCR values record boot measurements",
+      "mitigation": {
+        "approach": "Runtime virtualization doesn't affect TPM",
+        "notes": [
+          "Don't modify boot chain",
+          "Load hypervisor after boot"
+        ]
+      }
+    }
+  },
+
+  "forensic_artifacts": {
+    "etw_threat_intel": {
+      "description": "ETW Threat Intelligence provider",
+      "technique": "EtwThreatIntProvRegHandle logs kernel operations",
+      "mitigation": {
+        "approach": "Blind ETW-TI before operations, restore after",
+        "target": "EtwThreatIntProvRegHandle in ntoskrnl",
+        "notes": [
+          "Write 0 to handle to disable",
+          "Save and restore original value"
+        ]
+      }
+    },
+    "prefetch_files": {
+      "description": "Windows Prefetch files track execution",
+      "location": "C:\\Windows\\Prefetch\\*.pf",
+      "mitigation": {
+        "approach": "Secure delete prefetch files on exit",
+        "notes": [
+          "3-pass overwrite (0x00, 0xFF, random)",
+          "Delete files matching loader name"
+        ]
+      }
+    },
+    "mmunloaded_drivers": {
+      "description": "MmUnloadedDrivers tracks driver unloads",
+      "technique": "Windows maintains circular buffer of unloaded drivers",
+      "mitigation": {
+        "approach": "Clear MmUnloadedDrivers entries",
+        "notes": [
+          "Version-specific offsets required",
+          "Clear after driver operations"
+        ]
+      }
+    },
+    "event_logs": {
+      "description": "Windows Event Log entries",
+      "technique": "System/Security/Application logs may record activity",
+      "mitigation": {
+        "approach": "Clear specific event log entries",
+        "notes": [
+          "Walk EtwpLoggerList buffers",
+          "Remove entries by timestamp"
+        ]
+      }
+    }
+  }
+}

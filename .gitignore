@@ -1,0 +1,60 @@
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+.venv/
+venv/
+ENV/
+env/
+*.egg-info/
+dist/
+build/
+*.egg
+
+# IDEs
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# SQLite databases (keep tracked ones in data/)
+*.db
+!ombra_mcp_server/src/ombra_mcp/data/*.db
+
+# Logs
+*.log
+logs/
+
+# Build artifacts
+*.o
+*.obj
+*.exe
+*.dll
+*.sys
+*.pdb
+*.lib
+*.exp
+
+# Driver signing
+*.cer
+*.pfx
+*.pvk
+
+# Secrets
+.env
+*.key
+*.pem
+credentials.json
+
+# Temporary
+tmp/
+temp/
+*.tmp

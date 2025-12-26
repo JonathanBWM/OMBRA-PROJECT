@@ -1,0 +1,37 @@
+#ifndef OMBRA_MSR_DEFS_H
+#define OMBRA_MSR_DEFS_H
+
+#include "types.h"
+
+#define MSR_IA32_FEATURE_CONTROL    0x3A
+#define MSR_IA32_VMX_BASIC          0x480
+#define MSR_IA32_VMX_PINBASED_CTLS  0x481
+#define MSR_IA32_VMX_PROCBASED_CTLS 0x482
+#define MSR_IA32_VMX_EXIT_CTLS      0x483
+#define MSR_IA32_VMX_ENTRY_CTLS     0x484
+#define MSR_IA32_VMX_CR0_FIXED0     0x486
+#define MSR_IA32_VMX_CR0_FIXED1     0x487
+#define MSR_IA32_VMX_CR4_FIXED0     0x488
+#define MSR_IA32_VMX_CR4_FIXED1     0x489
+#define MSR_IA32_VMX_PROCBASED_CTLS2 0x48B
+#define MSR_IA32_VMX_EPT_VPID_CAP   0x48C
+#define MSR_IA32_VMX_TRUE_PINBASED  0x48D
+#define MSR_IA32_VMX_TRUE_PROCBASED 0x48E
+#define MSR_IA32_VMX_TRUE_EXIT      0x48F
+#define MSR_IA32_VMX_TRUE_ENTRY     0x490
+
+#define MSR_IA32_SYSENTER_CS        0x174
+#define MSR_IA32_SYSENTER_ESP       0x175
+#define MSR_IA32_SYSENTER_EIP       0x176
+#define MSR_IA32_EFER               0xC0000080
+#define MSR_IA32_FS_BASE            0xC0000100
+#define MSR_IA32_GS_BASE            0xC0000101
+#define MSR_IA32_KERNEL_GS_BASE     0xC0000102
+
+#define FEATURE_CONTROL_LOCK        BIT(0)
+#define FEATURE_CONTROL_VMX         BIT(2)
+
+#define EFER_LME                    BIT(8)
+#define EFER_LMA                    BIT(10)
+
+#endif
