@@ -47,14 +47,17 @@ def extract_concepts_from_doc(content: str, source_file: str) -> List[Dict[str, 
     """
     Extract hypervisor concepts from markdown documentation.
 
+    Deduplicates concepts by base type, merging data from multiple sections.
+
     Args:
         content: Markdown content
         source_file: Source filename for reference
 
     Returns:
-        List of concept dictionaries
+        List of concept dictionaries (one per unique concept type)
     """
-    concepts = []
+    # Track concepts by base ID for deduplication
+    concept_map: Dict[str, Dict[str, Any]] = {}
 
     # Extract sections for context
     sections = _split_sections(content)
@@ -66,28 +69,45 @@ def extract_concepts_from_doc(content: str, source_file: str) -> List[Dict[str, 
         for category, patterns in CONCEPT_PATTERNS.items():
             for pattern, concept_base in patterns:
                 if re.search(pattern, full_text, re.IGNORECASE):
-                    concept_id = _generate_concept_id(concept_base, section_title)
+                    concept_id = concept_base  # Use base directly, no section suffix
 
-                    # Check if we already have this concept
-                    existing = [c for c in concepts if c["id"] == concept_id]
-                    if existing:
-                        continue
+                    if concept_id in concept_map:
+                        # Merge data into existing concept
+                        existing = concept_map[concept_id]
+                        existing["vmcs_fields"] = list(set(
+                            existing["vmcs_fields"] + _extract_vmcs_fields(section_content)
+                        ))
+                        existing["msrs"] = list(set(
+                            existing["msrs"] + _extract_msrs(section_content)
+                        ))
+                        existing["exit_reasons"] = list(set(
+                            existing["exit_reasons"] + _extract_exit_reasons(section_content)
+                        ))
+                        # Upgrade priority if this section has higher priority
+                        new_priority = _infer_priority(section_content)
+                        if _priority_rank(new_priority) < _priority_rank(existing["priority"]):
+                            existing["priority"] = new_priority
+                    else:
+                        # Create new concept
+                        concept_map[concept_id] = {
+                            "id": concept_id,
+                            "category": category,
+                            "name": _generate_name(concept_base),
+                            "description": _extract_description(section_content),
+                            "source_doc": source_file,
+                            "vmcs_fields": _extract_vmcs_fields(section_content),
+                            "msrs": _extract_msrs(section_content),
+                            "exit_reasons": _extract_exit_reasons(section_content),
+                            "required_patterns": _generate_patterns(concept_base),
+                            "priority": _infer_priority(section_content),
+                        }
 
-                    concept = {
-                        "id": concept_id,
-                        "category": category,
-                        "name": _generate_name(concept_base),
-                        "description": _extract_description(section_content),
-                        "source_doc": source_file,
-                        "vmcs_fields": _extract_vmcs_fields(section_content),
-                        "msrs": _extract_msrs(section_content),
-                        "exit_reasons": _extract_exit_reasons(section_content),
-                        "required_patterns": _generate_patterns(concept_base),
-                        "priority": _infer_priority(section_content),
-                    }
-                    concepts.append(concept)
+    return list(concept_map.values())
 
-    return concepts
+
+def _priority_rank(priority: str) -> int:
+    """Return numeric rank for priority (lower = higher priority)."""
+    return {"critical": 1, "high": 2, "medium": 3, "low": 4}.get(priority, 5)
 
 
 def _split_sections(content: str) -> List[tuple]:
@@ -109,12 +129,6 @@ def _split_sections(content: str) -> List[tuple]:
         sections.append((current_title, "\n".join(current_content)))
 
     return sections
-
-
-def _generate_concept_id(base: str, section: str) -> str:
-    """Generate a unique concept ID."""
-    section_clean = re.sub(r"[^A-Za-z0-9]", "_", section).upper()[:20]
-    return f"{base}_{section_clean}".rstrip("_")
 
 
 def _generate_name(base: str) -> str:
