@@ -96,6 +96,15 @@ from .project_brain import (
     get_daemon_status,
 )
 
+from .concepts import (
+    get_concept,
+    list_concepts,
+    get_implementation_gaps,
+    verify_concept,
+    dismiss_concept_finding,
+    suggest_next_work,
+)
+
 __all__ = [
     # Binary Scanner
     "scan_binary_signatures",
@@ -167,4 +176,11 @@ __all__ = [
     "save_session_context",
     "refresh_analysis",
     "get_daemon_status",
+    # Concept Intelligence
+    "get_concept",
+    "list_concepts",
+    "get_implementation_gaps",
+    "verify_concept",
+    "dismiss_concept_finding",
+    "suggest_next_work",
 ]
