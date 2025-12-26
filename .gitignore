@@ -58,3 +58,6 @@ credentials.json
 tmp/
 temp/
 *.tmp
+
+# Git worktrees
+.worktrees/

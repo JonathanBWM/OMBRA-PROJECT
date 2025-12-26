@@ -78,6 +78,33 @@ from .hvci_bypass import (
     get_amd_vs_intel_considerations,
 )
 
+from .project_brain import (
+    get_project_status,
+    get_findings,
+    dismiss_finding,
+    get_suggestions,
+    get_component,
+    get_exit_handler_status,
+    add_decision,
+    get_decision,
+    list_decisions,
+    add_gotcha,
+    search_gotchas,
+    get_session_context,
+    save_session_context,
+    refresh_analysis,
+    get_daemon_status,
+)
+
+from .concepts import (
+    get_concept,
+    list_concepts,
+    get_implementation_gaps,
+    verify_concept,
+    dismiss_concept_finding,
+    suggest_next_work,
+)
+
 __all__ = [
     # Binary Scanner
     "scan_binary_signatures",
@@ -133,4 +160,27 @@ __all__ = [
     "get_detection_mitigation",
     "get_build_integration_guide",
     "get_amd_vs_intel_considerations",
+    # Project Brain
+    "get_project_status",
+    "get_findings",
+    "dismiss_finding",
+    "get_suggestions",
+    "get_component",
+    "get_exit_handler_status",
+    "add_decision",
+    "get_decision",
+    "list_decisions",
+    "add_gotcha",
+    "search_gotchas",
+    "get_session_context",
+    "save_session_context",
+    "refresh_analysis",
+    "get_daemon_status",
+    # Concept Intelligence
+    "get_concept",
+    "list_concepts",
+    "get_implementation_gaps",
+    "verify_concept",
+    "dismiss_concept_finding",
+    "suggest_next_work",
 ]
