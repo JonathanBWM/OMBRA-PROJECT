@@ -195,3 +195,115 @@ class ConceptsDB:
             results.append(result)
 
         return results
+
+    def add_finding(
+        self,
+        concept_id: str,
+        file_path: str,
+        line_number: int,
+        finding_type: str,
+        message: str,
+        severity: str = "info"
+    ) -> int:
+        """Add a finding for a concept."""
+        cursor = self.execute(
+            """
+            INSERT INTO concept_findings
+            (concept_id, file_path, line_number, finding_type, message, severity)
+            VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            (concept_id, file_path, line_number, finding_type, message, severity)
+        )
+        self.commit()
+        return cursor.lastrowid
+
+    def get_findings(
+        self,
+        concept_id: Optional[str] = None,
+        file_path: Optional[str] = None,
+        severity: Optional[str] = None,
+        include_dismissed: bool = False
+    ) -> List[Dict[str, Any]]:
+        """Query findings with filters."""
+        sql = "SELECT * FROM concept_findings WHERE 1=1"
+        params = []
+
+        if not include_dismissed:
+            sql += " AND dismissed = 0"
+        if concept_id:
+            sql += " AND concept_id = ?"
+            params.append(concept_id)
+        if file_path:
+            sql += " AND file_path LIKE ?"
+            params.append(f"%{file_path}%")
+        if severity:
+            sql += " AND severity = ?"
+            params.append(severity)
+
+        sql += " ORDER BY detected_at DESC"
+
+        rows = self.execute(sql, tuple(params)).fetchall()
+        return [dict(row) for row in rows]
+
+    def dismiss_finding(self, finding_id: int, reason: str) -> bool:
+        """Dismiss a finding as false positive."""
+        self.execute(
+            "UPDATE concept_findings SET dismissed = 1, dismissed_reason = ? WHERE id = ?",
+            (reason, finding_id)
+        )
+        self.commit()
+        return True
+
+    def add_annotation(
+        self,
+        concept_id: str,
+        file_path: str,
+        line_number: int,
+        annotation_type: str,
+        notes: Optional[str] = None
+    ) -> int:
+        """Add an annotation (human verification) for a concept."""
+        cursor = self.execute(
+            """
+            INSERT INTO concept_annotations
+            (concept_id, file_path, line_number, annotation_type, notes)
+            VALUES (?, ?, ?, ?, ?)
+            """,
+            (concept_id, file_path, line_number, annotation_type, notes)
+        )
+        annotation_id = cursor.lastrowid
+
+        # Update concept verification status
+        if annotation_type == "verified":
+            self.execute(
+                "UPDATE concepts SET verified_by_annotation = 1 WHERE id = ?",
+                (concept_id,)
+            )
+
+        self.commit()  # Single commit at end for atomic transaction
+        return annotation_id
+
+    def get_annotations(
+        self,
+        concept_id: Optional[str] = None,
+        file_path: Optional[str] = None,
+        annotation_type: Optional[str] = None
+    ) -> List[Dict[str, Any]]:
+        """Query annotations with filters."""
+        sql = "SELECT * FROM concept_annotations WHERE 1=1"
+        params = []
+
+        if concept_id:
+            sql += " AND concept_id = ?"
+            params.append(concept_id)
+        if file_path:
+            sql += " AND file_path LIKE ?"
+            params.append(f"%{file_path}%")
+        if annotation_type:
+            sql += " AND annotation_type = ?"
+            params.append(annotation_type)
+
+        sql += " ORDER BY created_at DESC"
+
+        rows = self.execute(sql, tuple(params)).fetchall()
+        return [dict(row) for row in rows]
