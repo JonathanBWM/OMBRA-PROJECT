@@ -20,9 +20,9 @@ import sqlite3
 from pathlib import Path
 from typing import Any, Dict
 
-from mcp.server import Server
+from mcp.server import Server, InitializationOptions
 from mcp.server.stdio import stdio_server
-from mcp.types import Tool, TextContent
+from mcp.types import Tool, TextContent, ServerCapabilities
 
 # Import advanced tools
 from .tools import (
@@ -75,14 +75,6 @@ from .tools import (
     save_session_context,
     refresh_analysis,
     get_daemon_status,
-)
-from ombra_mcp.tools.concepts import (
-    get_concept,
-    list_concepts,
-    get_implementation_gaps,
-    verify_concept,
-    dismiss_concept_finding,
-    suggest_next_work,
 )
 
 # Server instance
@@ -1395,75 +1387,6 @@ TOOLS = [
     Tool(name="get_daemon_status", description="Get status of the watcher daemon (running state, last scan time, findings)", inputSchema={
         "type": "object", "properties": {}
     }),
-
-    # Concept Intelligence Tools
-    Tool(
-        name="get_concept",
-        description="Get full details on a hypervisor concept including patterns, SDM refs, and implementation status",
-        inputSchema={
-            "type": "object",
-            "properties": {
-                "concept_id": {"type": "string", "description": "Concept ID (e.g., 'TSC_OFFSET_COMPENSATION')"}
-            },
-            "required": ["concept_id"]
-        }
-    ),
-    Tool(
-        name="list_concepts",
-        description="List hypervisor implementation concepts with optional filters",
-        inputSchema={
-            "type": "object",
-            "properties": {
-                "category": {"type": "string", "enum": ["timing", "vmx", "ept", "stealth"], "description": "Filter by category"},
-                "status": {"type": "string", "enum": ["not_started", "partial", "complete", "verified"], "description": "Filter by implementation status"},
-                "priority": {"type": "string", "enum": ["critical", "high", "medium", "low"], "description": "Filter by priority"}
-            }
-        }
-    ),
-    Tool(
-        name="get_implementation_gaps",
-        description="Get concepts that are not fully implemented, sorted by priority",
-        inputSchema={
-            "type": "object",
-            "properties": {
-                "category": {"type": "string", "enum": ["timing", "vmx", "ept", "stealth"], "description": "Filter by category"}
-            }
-        }
-    ),
-    Tool(
-        name="verify_concept",
-        description="Mark a concept as verified/implemented at a specific code location",
-        inputSchema={
-            "type": "object",
-            "properties": {
-                "concept_id": {"type": "string"},
-                "file_path": {"type": "string"},
-                "line_number": {"type": "integer"},
-                "notes": {"type": "string"}
-            },
-            "required": ["concept_id", "file_path", "line_number"]
-        }
-    ),
-    Tool(
-        name="dismiss_concept_finding",
-        description="Dismiss a concept finding as false positive",
-        inputSchema={
-            "type": "object",
-            "properties": {
-                "finding_id": {"type": "integer"},
-                "reason": {"type": "string"}
-            },
-            "required": ["finding_id", "reason"]
-        }
-    ),
-    Tool(
-        name="suggest_next_work",
-        description="Get AI-powered suggestions for what to implement next based on priorities and dependencies",
-        inputSchema={
-            "type": "object",
-            "properties": {}
-        }
-    ),
 ]
 
 TOOL_HANDLERS = {
@@ -1536,13 +1459,6 @@ TOOL_HANDLERS = {
     "save_session_context": save_session_context,
     "refresh_analysis": refresh_analysis,
     "get_daemon_status": get_daemon_status,
-    # Concept Intelligence
-    "get_concept": get_concept,
-    "list_concepts": list_concepts,
-    "get_implementation_gaps": get_implementation_gaps,
-    "verify_concept": verify_concept,
-    "dismiss_concept_finding": dismiss_concept_finding,
-    "suggest_next_work": suggest_next_work,
 }
 
 @app.list_tools()
@@ -1567,8 +1483,13 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
 # ============================================================================
 
 async def main():
+    init_options = InitializationOptions(
+        server_name="ombra-mcp",
+        server_version="2.1.0",
+        capabilities=ServerCapabilities(tools=True),
+    )
     async with stdio_server() as (read_stream, write_stream):
-        await app.run(read_stream, write_stream)
+        await app.run(read_stream, write_stream, init_options)
 
 if __name__ == "__main__":
     asyncio.run(main())
