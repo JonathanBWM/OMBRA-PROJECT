@@ -70,6 +70,13 @@ CREATE INDEX IF NOT EXISTS idx_annotations_concept ON concept_annotations(concep
 
 
 class ConceptsDB:
+    # JSON fields that need serialization/deserialization
+    JSON_FIELDS = [
+        "required_patterns", "optional_patterns", "anti_patterns",
+        "vmcs_fields", "exit_reasons", "msrs", "sdm_refs",
+        "implementation_files", "anti_cheat_relevance", "depends_on"
+    ]
+
     def __init__(self, db_path: Optional[Path] = None):
         if db_path is None:
             db_path = Path(__file__).parent / "concepts.db"
@@ -101,10 +108,11 @@ class ConceptsDB:
 
     def add_concept(self, concept: Dict[str, Any]) -> None:
         """Add or update a concept."""
+        # Work on a copy to avoid mutating caller's data
+        concept = dict(concept)
+
         # Convert lists to JSON
-        for field in ["required_patterns", "optional_patterns", "anti_patterns",
-                      "vmcs_fields", "exit_reasons", "msrs", "sdm_refs",
-                      "implementation_files", "anti_cheat_relevance", "depends_on"]:
+        for field in self.JSON_FIELDS:
             if field in concept and isinstance(concept[field], list):
                 concept[field] = json.dumps(concept[field])
 
@@ -131,9 +139,7 @@ class ConceptsDB:
         result = dict(row)
 
         # Parse JSON fields back to lists
-        for field in ["required_patterns", "optional_patterns", "anti_patterns",
-                      "vmcs_fields", "exit_reasons", "msrs", "sdm_refs",
-                      "implementation_files", "anti_cheat_relevance", "depends_on"]:
+        for field in self.JSON_FIELDS:
             if result.get(field):
                 try:
                     result[field] = json.loads(result[field])
@@ -162,7 +168,30 @@ class ConceptsDB:
             sql += " AND priority = ?"
             params.append(priority)
 
-        sql += " ORDER BY priority DESC, name"
+        # Order by semantic priority, then name
+        sql += """ ORDER BY
+            CASE priority
+                WHEN 'critical' THEN 1
+                WHEN 'high' THEN 2
+                WHEN 'medium' THEN 3
+                WHEN 'low' THEN 4
+                ELSE 5
+            END,
+            name
+        """
 
         rows = self.execute(sql, tuple(params)).fetchall()
-        return [dict(row) for row in rows]
+
+        # Deserialize JSON fields for consistency with get_concept()
+        results = []
+        for row in rows:
+            result = dict(row)
+            for field in self.JSON_FIELDS:
+                if result.get(field):
+                    try:
+                        result[field] = json.loads(result[field])
+                    except json.JSONDecodeError:
+                        pass
+            results.append(result)
+
+        return results
