@@ -59,6 +59,22 @@ from .tools import (
     ld9boxsup_ioctl_guide,
     generate_driver_wrapper,
     generate_hypervisor_loader,
+    # Project Brain tools
+    get_project_status,
+    get_findings,
+    dismiss_finding,
+    get_suggestions,
+    get_component,
+    get_exit_handler_status,
+    add_decision,
+    get_decision,
+    list_decisions,
+    add_gotcha,
+    search_gotchas,
+    get_session_context,
+    save_session_context,
+    refresh_analysis,
+    get_daemon_status,
 )
 
 # Server instance
@@ -1275,6 +1291,102 @@ TOOLS = [
     Tool(name="generate_hypervisor_loader", description="Generate hypervisor loader code", inputSchema={
         "type": "object", "properties": {}
     }),
+
+    # Project Brain Tools
+    Tool(name="get_project_status", description="Get overall project health dashboard with findings count, critical issues, and component status", inputSchema={
+        "type": "object",
+        "properties": {"verbose": {"type": "boolean", "description": "Include detailed findings and suggestions", "default": False}},
+    }),
+    Tool(name="get_findings", description="Query active code analysis findings", inputSchema={
+        "type": "object",
+        "properties": {
+            "severity": {"type": "string", "enum": ["critical", "warning", "info"], "description": "Filter by severity"},
+            "file": {"type": "string", "description": "Filter by file path (partial match)"},
+            "type_": {"type": "string", "description": "Filter by analyzer type (hypervisor, consistency, security)"},
+            "limit": {"type": "integer", "description": "Maximum findings to return", "default": 50}
+        },
+    }),
+    Tool(name="dismiss_finding", description="Dismiss a finding as false positive", inputSchema={
+        "type": "object",
+        "properties": {
+            "finding_id": {"type": "integer", "description": "ID of the finding to dismiss"},
+            "reason": {"type": "string", "description": "Optional reason for dismissal"}
+        },
+        "required": ["finding_id"]
+    }),
+    Tool(name="get_suggestions", description="Get pending suggestions for what to work on next", inputSchema={
+        "type": "object",
+        "properties": {
+            "priority": {"type": "string", "enum": ["high", "medium", "low"], "description": "Filter by priority"},
+            "limit": {"type": "integer", "description": "Maximum suggestions to return", "default": 10}
+        },
+    }),
+    Tool(name="get_component", description="Get details on a specific hypervisor component", inputSchema={
+        "type": "object",
+        "properties": {"component_id": {"type": "string", "description": "Component identifier (e.g., vmcs_setup, ept)"}},
+        "required": ["component_id"]
+    }),
+    Tool(name="get_exit_handler_status", description="Get status of all exit handlers", inputSchema={
+        "type": "object",
+        "properties": {"status": {"type": "string", "enum": ["implemented", "partial", "stub", "missing"], "description": "Filter by status"}},
+    }),
+    Tool(name="add_decision", description="Record a design decision for future reference", inputSchema={
+        "type": "object",
+        "properties": {
+            "topic": {"type": "string", "description": "What the decision is about"},
+            "choice": {"type": "string", "description": "What was decided"},
+            "rationale": {"type": "string", "description": "Why this choice was made"},
+            "alternatives": {"type": "array", "items": {"type": "string"}, "description": "Other options considered"},
+            "affects": {"type": "array", "items": {"type": "string"}, "description": "Files or components affected"}
+        },
+        "required": ["topic", "choice"]
+    }),
+    Tool(name="get_decision", description="Look up a design decision by ID", inputSchema={
+        "type": "object",
+        "properties": {"decision_id": {"type": "string", "description": "Decision ID (e.g., D001)"}},
+        "required": ["decision_id"]
+    }),
+    Tool(name="list_decisions", description="List all design decisions", inputSchema={
+        "type": "object",
+        "properties": {
+            "topic": {"type": "string", "description": "Filter by topic (partial match)"},
+            "affects": {"type": "string", "description": "Filter by affected file/component (partial match)"}
+        },
+    }),
+    Tool(name="add_gotcha", description="Record a solved bug for future reference", inputSchema={
+        "type": "object",
+        "properties": {
+            "symptom": {"type": "string", "description": "What the bug looked like"},
+            "cause": {"type": "string", "description": "What actually caused it"},
+            "fix": {"type": "string", "description": "How it was fixed"},
+            "files": {"type": "array", "items": {"type": "string"}, "description": "Affected files (e.g., vmcs.c:45)"}
+        },
+        "required": ["symptom", "cause", "fix"]
+    }),
+    Tool(name="search_gotchas", description="Search gotchas by keyword", inputSchema={
+        "type": "object",
+        "properties": {"keyword": {"type": "string", "description": "Search term (matches symptom, cause, or fix)"}},
+        "required": ["keyword"]
+    }),
+    Tool(name="get_session_context", description="Get context from the last session for resuming work", inputSchema={
+        "type": "object", "properties": {}
+    }),
+    Tool(name="save_session_context", description="Save current session context for later resumption", inputSchema={
+        "type": "object",
+        "properties": {
+            "working_on": {"type": "string", "description": "Brief description of current work"},
+            "context": {"type": "string", "description": "Detailed context/notes"},
+            "files_touched": {"type": "array", "items": {"type": "string"}, "description": "List of files modified this session"}
+        },
+        "required": ["working_on"]
+    }),
+    Tool(name="refresh_analysis", description="Force a full rescan of the codebase", inputSchema={
+        "type": "object",
+        "properties": {"path": {"type": "string", "description": "Optional specific path to scan (default: entire project)"}},
+    }),
+    Tool(name="get_daemon_status", description="Get status of the watcher daemon (running state, last scan time, findings)", inputSchema={
+        "type": "object", "properties": {}
+    }),
 ]
 
 TOOL_HANDLERS = {
@@ -1331,6 +1443,22 @@ TOOL_HANDLERS = {
     "ld9boxsup_ioctl_guide": ld9boxsup_ioctl_guide,
     "generate_driver_wrapper": generate_driver_wrapper,
     "generate_hypervisor_loader": generate_hypervisor_loader,
+    # Project Brain
+    "get_project_status": get_project_status,
+    "get_findings": get_findings,
+    "dismiss_finding": dismiss_finding,
+    "get_suggestions": get_suggestions,
+    "get_component": get_component,
+    "get_exit_handler_status": get_exit_handler_status,
+    "add_decision": add_decision,
+    "get_decision": get_decision,
+    "list_decisions": list_decisions,
+    "add_gotcha": add_gotcha,
+    "search_gotchas": search_gotchas,
+    "get_session_context": get_session_context,
+    "save_session_context": save_session_context,
+    "refresh_analysis": refresh_analysis,
+    "get_daemon_status": get_daemon_status,
 }
 
 @app.list_tools()
