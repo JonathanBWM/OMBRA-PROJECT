@@ -98,3 +98,71 @@ class ConceptsDB:
         if self._conn:
             self._conn.close()
             self._conn = None
+
+    def add_concept(self, concept: Dict[str, Any]) -> None:
+        """Add or update a concept."""
+        # Convert lists to JSON
+        for field in ["required_patterns", "optional_patterns", "anti_patterns",
+                      "vmcs_fields", "exit_reasons", "msrs", "sdm_refs",
+                      "implementation_files", "anti_cheat_relevance", "depends_on"]:
+            if field in concept and isinstance(concept[field], list):
+                concept[field] = json.dumps(concept[field])
+
+        fields = list(concept.keys())
+        placeholders = ", ".join(["?" for _ in fields])
+        field_names = ", ".join(fields)
+
+        sql = f"""
+            INSERT OR REPLACE INTO concepts ({field_names})
+            VALUES ({placeholders})
+        """
+        self.execute(sql, tuple(concept.values()))
+        self.commit()
+
+    def get_concept(self, concept_id: str) -> Optional[Dict[str, Any]]:
+        """Get a concept by ID."""
+        row = self.execute(
+            "SELECT * FROM concepts WHERE id = ?", (concept_id,)
+        ).fetchone()
+
+        if row is None:
+            return None
+
+        result = dict(row)
+
+        # Parse JSON fields back to lists
+        for field in ["required_patterns", "optional_patterns", "anti_patterns",
+                      "vmcs_fields", "exit_reasons", "msrs", "sdm_refs",
+                      "implementation_files", "anti_cheat_relevance", "depends_on"]:
+            if result.get(field):
+                try:
+                    result[field] = json.loads(result[field])
+                except json.JSONDecodeError:
+                    pass
+
+        return result
+
+    def list_concepts(
+        self,
+        category: Optional[str] = None,
+        status: Optional[str] = None,
+        priority: Optional[str] = None
+    ) -> List[Dict[str, Any]]:
+        """List concepts with optional filters."""
+        sql = "SELECT * FROM concepts WHERE 1=1"
+        params = []
+
+        if category:
+            sql += " AND category = ?"
+            params.append(category)
+        if status:
+            sql += " AND implementation_status = ?"
+            params.append(status)
+        if priority:
+            sql += " AND priority = ?"
+            params.append(priority)
+
+        sql += " ORDER BY priority DESC, name"
+
+        rows = self.execute(sql, tuple(params)).fetchall()
+        return [dict(row) for row in rows]
