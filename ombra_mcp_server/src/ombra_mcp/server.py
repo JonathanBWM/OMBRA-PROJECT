@@ -20,9 +20,9 @@ import sqlite3
 from pathlib import Path
 from typing import Any, Dict
 
-from mcp.server import Server
+from mcp.server import Server, InitializationOptions
 from mcp.server.stdio import stdio_server
-from mcp.types import Tool, TextContent
+from mcp.types import Tool, TextContent, ServerCapabilities, ToolsCapability
 
 # Import advanced tools
 from .tools import (
@@ -1483,8 +1483,13 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
 # ============================================================================
 
 async def main():
+    init_options = InitializationOptions(
+        server_name="ombra-mcp",
+        server_version="2.1.0",
+        capabilities=ServerCapabilities(tools=ToolsCapability()),
+    )
     async with stdio_server() as (read_stream, write_stream):
-        await app.run(read_stream, write_stream)
+        await app.run(read_stream, write_stream, init_options)
 
 if __name__ == "__main__":
     asyncio.run(main())

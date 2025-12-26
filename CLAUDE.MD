@@ -144,16 +144,110 @@ When generating ANY written content (stories, documentation, comments):
 - Include testing notes and edge cases considered
 - Link to relevant context (designs, tickets, discussions)
 
+## OmbraMCP Server Integration
+
+PROJECT-OMBRA has a dedicated MCP server (`ombra-mcp`) with 60+ tools specifically designed for hypervisor development. **You MUST use this server** when working on hypervisor code.
+
+### When to Use OmbraMCP
+
+**ALWAYS use OmbraMCP when:**
+- Writing or modifying VMCS setup code → `vmcs_field_complete`, `validate_vmcs_setup`
+- Implementing exit handlers → `exit_reason_complete`, `generate_exit_handler`
+- Working on EPT/memory virtualization → `generate_ept_setup`, `get_ept_structures`
+- Adding MSR virtualization → `get_msr_info`, `generate_msr_bitmap_setup`
+- Implementing stealth features → `get_detection_vectors`, `audit_stealth`, `generate_timing_compensation`
+- Debugging VMX issues → `decode_vmx_error`, `decode_exit_qualification`
+- Auditing code for anti-cheat detection → `get_anticheat_intel`, `check_evasion_coverage`
+- Using BYOVD/Ld9BoxSup.sys → `ld9boxsup_ioctl_guide`, `generate_driver_wrapper`
+- Manual driver mapping → `get_pe_parsing_guide`, `generate_mapping_checklist`
+- HVCI bypass work → `get_zerohvci_architecture`, `get_hypercall_protocol`
+
+### MCP Tool Categories
+
+| Category | Key Tools | Use For |
+|----------|-----------|---------|
+| **Intel SDM** | `ask_sdm`, `vmcs_field_complete`, `exit_reason_complete`, `get_msr_info` | Any VMX specification questions |
+| **Code Generation** | `generate_vmcs_setup`, `generate_exit_handler`, `generate_ept_setup`, `generate_asm_stub` | Creating hypervisor components |
+| **Validation** | `validate_vmcs_setup`, `get_vmcs_checklist` | Pre-flight checks before testing |
+| **Stealth** | `get_detection_vectors`, `audit_stealth`, `generate_cpuid_spoofing`, `generate_timing_compensation` | Anti-detection work |
+| **Anti-Cheat Intel** | `get_anticheat_intel`, `get_timing_requirements`, `check_evasion_coverage` | Evasion strategy |
+| **BYOVD** | `ld9boxsup_ioctl_guide`, `generate_driver_wrapper`, `generate_hypervisor_loader` | Vulnerable driver exploitation |
+| **Driver Mapper** | `get_pe_parsing_guide`, `get_relocation_guide`, `get_cleanup_guide` | Manual PE mapping |
+| **HVCI Bypass** | `get_zerohvci_architecture`, `get_hypercall_protocol`, `get_phase_implementation_guide` | Runtime Hyper-V hijacking |
+| **Project Brain** | `get_project_status`, `get_findings`, `add_decision`, `add_gotcha` | Project state tracking |
+
+### Usage Pattern
+
+```bash
+# Check schema first (REQUIRED)
+mcp-cli info ombra/<tool>
+
+# Then call the tool
+mcp-cli call ombra/vmcs_field_complete '{"field_name": "GUEST_RIP"}'
+mcp-cli call ombra/get_anticheat_intel '{"anticheat": "EAC"}'
+mcp-cli call ombra/generate_exit_handler '{"reason": 10, "stealth": true}'
+```
+
+### Mandatory Checks
+
+Before implementing ANY hypervisor feature:
+1. **Query the SDM** - Use `ask_sdm` or specific field/exit tools to get authoritative specs
+2. **Generate skeleton** - Use code generation tools as starting points
+3. **Validate config** - Run `validate_vmcs_setup` before testing
+4. **Audit stealth** - Run `audit_stealth` on new code to catch signatures
+5. **Check anti-cheat coverage** - Use `check_evasion_coverage` to identify gaps
+
+Before committing hypervisor code:
+1. Run `audit_stealth` on all modified files
+2. Check `get_anticheat_intel` if adding new exit handlers
+3. Document decisions with `add_decision`
+4. Track solved bugs with `add_gotcha`
+
+### Database Reference
+
+The MCP server has pre-populated databases:
+- **intel_sdm.db**: 167 VMCS fields, 66 exit reasons, 35 MSRs, 20 exceptions
+- **project_brain.db**: Project state, findings, decisions, gotchas
+- **detection_vectors.json**: Anti-cheat detection methods and thresholds
+- **ld9boxsup_ioctls.json**: BYOVD IOCTL specifications
+
+### Don't Guess - Query
+
+If you're unsure about:
+- VMCS field encoding → `vmcs_field_complete`
+- Exit qualification bits → `exit_reason_complete`
+- MSR address/behavior → `get_msr_info`
+- Exception vector details → `get_exception_info`
+- Control bit meanings → `get_vmx_control_bits`
+- Detection thresholds → `get_timing_requirements`
+
+**Never hardcode VMX constants without verification from OmbraMCP.**
+
 ## Project-Specific Patterns
 
-[Customize this section per project - add specific architecture decisions, naming conventions, file organization patterns, testing strategies, deployment procedures]
+### Hypervisor Architecture
+- VMX operations in `hypervisor/hypervisor/vmx.c`
+- VMCS setup in `hypervisor/hypervisor/vmcs.c`
+- EPT management in `hypervisor/hypervisor/ept.c`
+- Exit handlers in `hypervisor/hypervisor/exit_handler.c`
+- Stealth features integrated into each component
 
-### Example Additions:
-- API endpoints follow REST conventions: `/api/v1/resource/:id`
-- React components use functional + hooks, no class components
-- All database queries go through the ORM, no raw SQL except for complex analytics
-- Environment variables stored in `.env.local`, never committed
-- Tests live adjacent to source: `component.tsx` and `component.test.tsx`
+### Naming Conventions
+- VMCS fields: `VMCS_<FIELD_NAME>` (e.g., `VMCS_GUEST_RIP`)
+- Exit handlers: `handle_<exit_name>` (e.g., `handle_cpuid`)
+- EPT structures: `EPT_<LEVEL>E` (e.g., `EPT_PML4E`, `EPT_PTE`)
+- Control functions: `vmx_<action>` (e.g., `vmx_vmxon`, `vmx_vmlaunch`)
+
+### Code Organization
+- Pure C for kernel components (no C++ in hypervisor core)
+- x64 MASM for intrinsics and entry points
+- Python for MCP server and tooling
+- All constants derived from Intel SDM via OmbraMCP
+
+### Testing Strategy
+- Validate VMCS configs with `validate_vmcs_setup` before hardware testing
+- Audit stealth before any anti-cheat environment testing
+- Use Project Brain to track what's implemented vs stubbed
 
 ## Handling Creative Requests
 
