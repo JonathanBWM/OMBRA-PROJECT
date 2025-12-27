@@ -19,6 +19,13 @@
 
 #include "types.h"
 
+// MSVC compatibility for static assertions
+#ifdef _MSC_VER
+    #define STATIC_ASSERT(expr, msg) static_assert(expr, msg)
+#else
+    #define STATIC_ASSERT(expr, msg) STATIC_ASSERT(expr, msg)
+#endif
+
 //=============================================================================
 // Magic Values and Constants
 //=============================================================================
@@ -116,7 +123,7 @@ typedef struct _SUPREQHDR {
 } SUPREQHDR, *PSUPREQHDR;
 
 // Compile-time size verification
-_Static_assert(sizeof(SUPREQHDR) == 24, "SUPREQHDR must be 24 bytes");
+STATIC_ASSERT(sizeof(SUPREQHDR) == 24, "SUPREQHDR must be 24 bytes");
 
 //-----------------------------------------------------------------------------
 // SUP_IOCTL_COOKIE - Establish session and negotiate version
@@ -150,8 +157,8 @@ typedef struct _SUPCOOKIE {
 #define COOKIE_SIZE_IN  0x30    // 48 bytes
 #define COOKIE_SIZE_OUT 0x38    // 56 bytes
 
-_Static_assert(sizeof(SUPCOOKIE_IN) == 24, "SUPCOOKIE_IN must be 24 bytes");
-_Static_assert(sizeof(SUPCOOKIE_OUT) == 32, "SUPCOOKIE_OUT must be 32 bytes");
+STATIC_ASSERT(sizeof(SUPCOOKIE_IN) == 24, "SUPCOOKIE_IN must be 24 bytes");
+STATIC_ASSERT(sizeof(SUPCOOKIE_OUT) == 32, "SUPCOOKIE_OUT must be 32 bytes");
 
 //-----------------------------------------------------------------------------
 // SUP_IOCTL_LDR_OPEN - Request kernel memory allocation
@@ -183,9 +190,9 @@ typedef struct _SUPLDROPEN {
 #define LDR_OPEN_SIZE_IN  0x148  // 328 bytes
 #define LDR_OPEN_SIZE_OUT 0x28   // 40 bytes
 
-_Static_assert(sizeof(SUPLDROPEN_IN) == 300, "SUPLDROPEN_IN must be 300 bytes");
-_Static_assert(sizeof(SUPLDROPEN_OUT) == 16, "SUPLDROPEN_OUT must be 16 bytes");
-_Static_assert(sizeof(SUPLDROPEN) == 328, "SUPLDROPEN must be 328 bytes");
+STATIC_ASSERT(sizeof(SUPLDROPEN_IN) == 300, "SUPLDROPEN_IN must be 300 bytes");
+STATIC_ASSERT(sizeof(SUPLDROPEN_OUT) == 16, "SUPLDROPEN_OUT must be 16 bytes");
+STATIC_ASSERT(sizeof(SUPLDROPEN) == 328, "SUPLDROPEN must be 328 bytes");
 
 //-----------------------------------------------------------------------------
 // SUP_IOCTL_LDR_LOAD - Load module and execute entry point

@@ -141,9 +141,22 @@ typedef struct _SUPPAGEALLOCEX {
 #define SUP_IOCTL_PAGE_ALLOC_EX_SIZE_IN  (sizeof(SUPREQHDR) + 8)
 #define SUP_IOCTL_PAGE_ALLOC_EX_SIZE_OUT(cPages) (sizeof(SUPREQHDR) + 16 + ((cPages) * 8))
 
-// Legacy type aliases for compatibility
-typedef SUPPAGEALLOCEX_IN  SUPPAGEALLOC_IN;
-typedef SUPPAGEALLOCEX_OUT SUPPAGEALLOC_OUT;
+// Full request structures with headers for direct use
+typedef struct _SUPPAGEALLOC_IN {
+    SUPREQHDR   Hdr;
+    uint32_t    cPages;
+    uint8_t     fKernelMapping;
+    uint8_t     fUserMapping;
+    uint8_t     fReserved0;
+    uint8_t     fReserved1;
+} SUPPAGEALLOC_IN;
+
+typedef struct _SUPPAGEALLOC_OUT {
+    SUPREQHDR   Hdr;
+    uint64_t    pvR3;
+    uint64_t    pvR0;
+    // Followed by physical addresses array
+} SUPPAGEALLOC_OUT;
 
 // =============================================================================
 // SUP_IOCTL_CALL_VMMR0 — Execute in Ring-0
