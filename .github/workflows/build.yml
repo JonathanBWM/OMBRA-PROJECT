@@ -67,12 +67,12 @@ jobs:
       working-directory: hypervisor/hypervisor
       run: |
         echo Building assembly files...
-        if not exist asm\obj mkdir asm\obj
-        ml64.exe /nologo /c /Fo:asm\obj\vmexit.obj asm\vmexit.asm
+        mkdir asm\obj 2>nul
+        ml64.exe /nologo /c /Foasm\obj\vmexit.obj asm\vmexit.asm
         if %ERRORLEVEL% neq 0 exit /b 1
-        ml64.exe /nologo /c /Fo:asm\obj\intrinsics.obj asm\intrinsics.asm
+        ml64.exe /nologo /c /Foasm\obj\intrinsics.obj asm\intrinsics.asm
         if %ERRORLEVEL% neq 0 exit /b 1
-        ml64.exe /nologo /c /Fo:asm\obj\segment.obj asm\segment.asm
+        ml64.exe /nologo /c /Foasm\obj\segment.obj asm\segment.asm
         if %ERRORLEVEL% neq 0 exit /b 1
         echo Assembly built successfully
         dir asm\obj\*.obj
