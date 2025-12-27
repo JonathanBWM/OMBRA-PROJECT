@@ -11,10 +11,10 @@
 // =============================================================================
 
 // Main initialization - calls all setup functions
-OMBRA_STATUS VmcsInitialize(VMX_CPU* cpu, HV_INIT_PARAMS* params);
+OMBRA_STATUS VmcsInitialize(VMX_CPU* cpu, HV_PER_CPU_PARAMS* params);
 
 // Individual setup functions
-void VmcsSetupControls(VMX_CPU* cpu, HV_INIT_PARAMS* params);
+void VmcsSetupControls(VMX_CPU* cpu, HV_PER_CPU_PARAMS* params);
 void VmcsSetupGuestState(VMX_CPU* cpu);
 void VmcsSetupHostState(VMX_CPU* cpu);
 

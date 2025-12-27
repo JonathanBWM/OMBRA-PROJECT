@@ -260,7 +260,7 @@ static U32 GetCurrentApicId(void) {
 // Per-CPU Initialization
 // =============================================================================
 
-OMBRA_STATUS VmxInitializeCpu(HV_INIT_PARAMS* params) {
+OMBRA_STATUS VmxInitializeCpu(HV_PER_CPU_PARAMS* params) {
     VMX_CPU* cpu;
     OMBRA_STATUS status;
 

@@ -7,6 +7,7 @@
 #include "../shared/types.h"
 #include "../shared/vmcs_fields.h"
 #include "../shared/msr_defs.h"
+#include "../shared/cpu_defs.h"
 #include "vmx.h"
 #include "vmcs.h"
 #include "ept.h"
@@ -139,10 +140,38 @@ static OMBRA_STATUS InitializeCpuVmx(
     cpu->VmxEnabled = true;
     INFO("CPU %u: VMXON successful", cpuId);
 
-    // Initialize VMCS - need to create a compatible init structure
-    // For now, create a minimal HV_INIT_PARAMS compatible structure
-    HV_INIT_PARAMS cpuParams = *params;
-    cpuParams.CpuCount = 1;  // Per-CPU init
+    // Initialize VMCS - create HV_PER_CPU_PARAMS from the Phase 1 params
+    HV_PER_CPU_PARAMS cpuParams = {0};
+    cpuParams.CpuId = cpuId;
+    cpuParams.TotalCpus = params->CpuCount;
+    cpuParams.VmxonPhysical = vmxonPhys;
+    cpuParams.VmcsPhysical = vmcsPhys;
+    cpuParams.HostStackTop = (U64)stackTop;
+    cpuParams.MsrBitmapPhysical = msrBitmapPhys;
+    cpuParams.VmxonVirtual = vmxonVirt;
+    cpuParams.VmcsVirtual = vmcsVirt;
+    cpuParams.MsrBitmapVirtual = msrBitmapVirt;
+    cpuParams.EptPml4Physical = params->EptTablesPhys;
+    cpuParams.EptPml4Virtual = params->EptTablesVirt;
+    // Copy VMX MSR values
+    cpuParams.VmxBasic = params->VmxBasic;
+    cpuParams.VmxPinCtls = params->VmxPinbasedCtls;
+    cpuParams.VmxProcCtls = params->VmxProcbasedCtls;
+    cpuParams.VmxProcCtls2 = params->VmxProcbasedCtls2;
+    cpuParams.VmxExitCtls = params->VmxExitCtls;
+    cpuParams.VmxEntryCtls = params->VmxEntryCtls;
+    cpuParams.VmxTruePin = params->VmxTruePinbasedCtls;
+    cpuParams.VmxTrueProc = params->VmxTrueProcbasedCtls;
+    cpuParams.VmxTrueExit = params->VmxTrueExitCtls;
+    cpuParams.VmxTrueEntry = params->VmxTrueEntryCtls;
+    cpuParams.VmxCr0Fixed0 = params->VmxCr0Fixed0;
+    cpuParams.VmxCr0Fixed1 = params->VmxCr0Fixed1;
+    cpuParams.VmxCr4Fixed0 = params->VmxCr4Fixed0;
+    cpuParams.VmxCr4Fixed1 = params->VmxCr4Fixed1;
+    cpuParams.VmxEptVpidCap = params->VmxEptVpidCap;
+    cpuParams.DebugBufferPhysical = params->DebugBufferPhys;
+    cpuParams.DebugBufferVirtual = params->DebugBufferVirt;
+    cpuParams.DebugBufferSize = params->DebugBufferSize;
 
     status = VmcsInitialize(cpu, &cpuParams);
     if (OMBRA_FAILED(status)) {
@@ -162,7 +191,7 @@ static OMBRA_STATUS InitializeCpuVmx(
         return OMBRA_SUCCESS;
     } else {
         U64 errorCode = 0;
-        __vmx_vmread(VMCS_RODATA_INSTR_ERROR, &errorCode);
+        __vmx_vmread(VMCS_EXIT_INSTRUCTION_ERROR, &errorCode);
         ERR("CPU %u: VMLAUNCH failed - error code %llu", cpuId, errorCode);
         __vmx_off();
         cpu->VmxEnabled = false;

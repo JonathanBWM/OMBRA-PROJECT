@@ -145,10 +145,13 @@ typedef struct _VMX_CPU {
 } VMX_CPU;
 
 // =============================================================================
-// Initialization Data (passed from usermode loader)
+// Per-CPU Initialization Data (used by VmxInitializeCpu)
+// Note: This extends the base HV_INIT_PARAMS from types.h for per-CPU init
 // =============================================================================
 
-typedef struct _HV_INIT_PARAMS {
+#ifndef HV_PER_CPU_PARAMS_DEFINED
+#define HV_PER_CPU_PARAMS_DEFINED
+typedef struct _HV_PER_CPU_PARAMS {
     U32     CpuId;
     U32     TotalCpus;
 
@@ -199,7 +202,8 @@ typedef struct _HV_INIT_PARAMS {
     U64     DebugBufferPhysical;
     void*   DebugBufferVirtual;
     U64     DebugBufferSize;
-} HV_INIT_PARAMS;
+} HV_PER_CPU_PARAMS;
+#endif // HV_PER_CPU_PARAMS_DEFINED
 
 // =============================================================================
 // Global State
@@ -233,7 +237,7 @@ OMBRA_STATUS VmxDisable(VMX_CPU* cpu);
 // VMCS Operations
 U64  VmcsRead(U32 field);
 void VmcsWrite(U32 field, U64 value);
-OMBRA_STATUS VmcsInitialize(VMX_CPU* cpu, HV_INIT_PARAMS* params);
+OMBRA_STATUS VmcsInitialize(VMX_CPU* cpu, HV_PER_CPU_PARAMS* params);
 
 // Control Adjustment
 U32 AdjustControls(U32 requested, U32 msr);
@@ -246,7 +250,7 @@ U64 GetSegmentBase(U16 selector);
 U32 GetSegmentLimit(U16 selector);
 
 // Per-CPU Initialization
-OMBRA_STATUS VmxInitializeCpu(HV_INIT_PARAMS* params);
+OMBRA_STATUS VmxInitializeCpu(HV_PER_CPU_PARAMS* params);
 OMBRA_STATUS VmxLaunchCpu(VMX_CPU* cpu);
 
 // Utility

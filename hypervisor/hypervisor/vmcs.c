@@ -14,7 +14,7 @@
 // VMCS Initialization
 // =============================================================================
 
-OMBRA_STATUS VmcsInitialize(VMX_CPU* cpu, HV_INIT_PARAMS* params) {
+OMBRA_STATUS VmcsInitialize(VMX_CPU* cpu, HV_PER_CPU_PARAMS* params) {
     U64 vmxBasic;
     U8 error;
 
@@ -63,7 +63,7 @@ static bool UseTrueControls(void) {
     return (vmxBasic & (1ULL << 55)) != 0;  // Bit 55 indicates TRUE controls
 }
 
-void VmcsSetupControls(VMX_CPU* cpu, HV_INIT_PARAMS* params) {
+void VmcsSetupControls(VMX_CPU* cpu, HV_PER_CPU_PARAMS* params) {
     U32 pinBased, procBased, procBased2, exitCtls, entryCtls;
     U32 pinMsr, procMsr, exitMsr, entryMsr;
     bool useTrueCtls = UseTrueControls();
