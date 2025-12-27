@@ -121,13 +121,6 @@ jobs:
     - name: Checkout repository
       uses: actions/checkout@v4
 
-    - name: Clone ImGui library
-      shell: cmd
-      run: |
-        git clone --depth 1 https://github.com/ocornut/imgui.git hypervisor/usermode/gui/imgui
-        if %ERRORLEVEL% neq 0 exit /b 1
-        echo ImGui cloned successfully
-
     - name: Setup MSBuild
       uses: microsoft/setup-msbuild@v2
 
