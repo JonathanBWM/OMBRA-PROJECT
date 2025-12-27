@@ -36,6 +36,7 @@
 #include "vmx.h"
 #include "debug.h"
 #include "../shared/ept_defs.h"
+#include "../shared/vmcs_fields.h"
 
 // =============================================================================
 // Global Hook Manager Instance
