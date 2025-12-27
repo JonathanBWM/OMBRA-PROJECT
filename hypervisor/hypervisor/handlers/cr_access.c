@@ -6,6 +6,7 @@
 #include "../timing.h"
 #include "../../shared/vmcs_fields.h"
 #include "../../shared/cpu_defs.h"
+#include "../../shared/msr_defs.h"
 #include <intrin.h>
 
 // =============================================================================

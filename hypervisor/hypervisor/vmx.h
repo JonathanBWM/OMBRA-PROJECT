@@ -218,6 +218,10 @@ typedef struct _OMBRA_STATE {
 
     // Shared EPT
     struct _EPT_STATE* Ept;
+
+    // Driver mapping state (Phase 2)
+    U64         DriverCr3;      // CR3 of the driver mapping process
+    bool        DriverLoaded;   // Whether a mapped driver is active
 } OMBRA_STATE;
 
 extern OMBRA_STATE g_Ombra;
