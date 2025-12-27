@@ -4,8 +4,27 @@
  */
 
 #include "detection_baseline.h"
+#include "../byovd/nt_defs.h"
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
+
+// External NT functions from nt_helpers.c
+extern PFN_NtQuerySystemInformation g_NtQuerySystemInformation;
+extern bool NtInit(void);
+
+// VirtualBox-related pool tags to detect
+static const ULONG g_VBoxTags[] = {
+    'xoBV',     // VBox (little-endian: 0x786F4256)
+    'XoBV',     // VBoX
+    'MMoV',     // VoMM - VBox memory manager
+    'rDpS',     // SpDr - SUPDrv
+    'gMpS',     // SpMg - SUP memory
+    'B9dL',     // Ld9B - LDPlayer
+    'xoBv',     // vBox variant
+    'tsuG',     // Guest
+    0           // Sentinel
+};
 
 /**
  * Capture system baseline metrics
@@ -150,51 +169,143 @@ void PrintBaseline(const DETECTION_BASELINE* baseline)
 }
 
 /**
- * Count NonPagedPool allocations >4KB
- * TODO: Implement using NtQuerySystemInformation(SystemBigPoolInformation)
+ * Helper: Query BigPool information from kernel
+ * Returns allocated buffer (caller must free) or NULL on failure
  */
-uint32_t CountBigPoolEntries(void)
+static PSYSTEM_BIGPOOL_INFORMATION QueryBigPoolInfo(void)
 {
-    // Stub implementation - returns 0 until NtQuerySystemInformation is integrated
-    // Real implementation will:
-    //   1. Call NtQuerySystemInformation with SystemBigPoolInformation (0x42)
-    //   2. Enumerate SYSTEM_BIGPOOL_ENTRY structures
-    //   3. Count entries with Size >= 4096 and Type == NonPagedPool
-    //   4. Filter out known Windows allocations to reduce noise
-    return 0;
+    if (!NtInit() || !g_NtQuerySystemInformation) {
+        return NULL;
+    }
+
+    // Query required size
+    ULONG cbNeeded = 0;
+    NTSTATUS status = g_NtQuerySystemInformation(
+        SystemBigPoolInformation,
+        NULL,
+        0,
+        &cbNeeded
+    );
+
+    // STATUS_INFO_LENGTH_MISMATCH is expected on size query
+    if (cbNeeded == 0) {
+        // Try a reasonable default size
+        cbNeeded = 1024 * 1024;  // 1MB should be plenty
+    }
+
+    // Allocate with extra margin
+    ULONG cbBuffer = cbNeeded + 0x10000;
+    PVOID pBuffer = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, cbBuffer);
+    if (!pBuffer) {
+        return NULL;
+    }
+
+    status = g_NtQuerySystemInformation(
+        SystemBigPoolInformation,
+        pBuffer,
+        cbBuffer,
+        &cbNeeded
+    );
+
+    if (!NT_SUCCESS(status)) {
+        HeapFree(GetProcessHeap(), 0, pBuffer);
+        return NULL;
+    }
+
+    return (PSYSTEM_BIGPOOL_INFORMATION)pBuffer;
 }
 
 /**
- * Count VirtualBox signature tags in memory
- * TODO: Implement pool tag scanning or registry enumeration
+ * Count NonPagedPool allocations >4KB
+ */
+uint32_t CountBigPoolEntries(void)
+{
+    PSYSTEM_BIGPOOL_INFORMATION pInfo = QueryBigPoolInfo();
+    if (!pInfo) {
+        printf("[-] Failed to query BigPool information\n");
+        return 0;
+    }
+
+    uint32_t count = pInfo->Count;
+    HeapFree(GetProcessHeap(), 0, pInfo);
+
+    return count;
+}
+
+/**
+ * Helper: Check if a pool tag matches VBox signatures
+ */
+static bool IsVBoxPoolTag(ULONG tag)
+{
+    for (int i = 0; g_VBoxTags[i] != 0; i++) {
+        if (tag == g_VBoxTags[i]) {
+            return true;
+        }
+    }
+    return false;
+}
+
+/**
+ * Count VirtualBox signature tags in BigPool
  */
 uint32_t CountVBoxTags(void)
 {
-    // Stub implementation - returns 0 until scanning is implemented
-    // Real implementation will:
-    //   1. Scan SystemBigPoolInformation for VBox-related tags:
-    //      - 'VBox', 'vbgl', 'VbglR0', 'VBoxGuest', 'VBoxSF'
-    //   2. Check registry keys:
-    //      - HKLM\SYSTEM\CurrentControlSet\Services\VBoxGuest
-    //      - HKLM\HARDWARE\ACPI\DSDT\VBOX__
-    //   3. Scan loaded modules for vbox*.sys
-    //   4. Return total count of artifacts found
-    return 0;
+    PSYSTEM_BIGPOOL_INFORMATION pInfo = QueryBigPoolInfo();
+    if (!pInfo) {
+        return 0;
+    }
+
+    uint32_t vboxCount = 0;
+
+    for (ULONG i = 0; i < pInfo->Count; i++) {
+        if (IsVBoxPoolTag(pInfo->AllocatedInfo[i].TagUlong)) {
+            vboxCount++;
+        }
+    }
+
+    HeapFree(GetProcessHeap(), 0, pInfo);
+    return vboxCount;
 }
 
 /**
  * Count loaded kernel drivers
- * TODO: Implement using NtQuerySystemInformation(SystemModuleInformation)
  */
 uint32_t CountLoadedDrivers(void)
 {
-    // Stub implementation - returns 0 until NtQuerySystemInformation is integrated
-    // Real implementation will:
-    //   1. Call NtQuerySystemInformation with SystemModuleInformation (0x0B)
-    //   2. Enumerate RTL_PROCESS_MODULES structure
-    //   3. Count total number of modules in kernel space
-    //   4. Return module count
-    return 0;
+    if (!NtInit() || !g_NtQuerySystemInformation) {
+        return 0;
+    }
+
+    // Query required size
+    ULONG cbNeeded = 0;
+    g_NtQuerySystemInformation(SystemModuleInformation, NULL, 0, &cbNeeded);
+    if (cbNeeded == 0) {
+        return 0;
+    }
+
+    // Allocate with margin
+    PVOID pBuffer = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, cbNeeded + 0x1000);
+    if (!pBuffer) {
+        return 0;
+    }
+
+    NTSTATUS status = g_NtQuerySystemInformation(
+        SystemModuleInformation,
+        pBuffer,
+        cbNeeded + 0x1000,
+        &cbNeeded
+    );
+
+    if (!NT_SUCCESS(status)) {
+        HeapFree(GetProcessHeap(), 0, pBuffer);
+        return 0;
+    }
+
+    PRTL_PROCESS_MODULES pModules = (PRTL_PROCESS_MODULES)pBuffer;
+    uint32_t count = pModules->NumberOfModules;
+
+    HeapFree(GetProcessHeap(), 0, pBuffer);
+    return count;
 }
 
 /**

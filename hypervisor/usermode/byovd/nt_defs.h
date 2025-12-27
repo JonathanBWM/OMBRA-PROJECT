@@ -73,7 +73,8 @@ typedef struct _NT_IO_STATUS_BLOCK {
 // NtQuerySystemInformation Structures
 //=============================================================================
 
-#define SystemModuleInformation 11
+#define SystemModuleInformation     11
+#define SystemBigPoolInformation    0x42  // 66
 
 typedef struct _RTL_PROCESS_MODULE_INFORMATION {
     HANDLE Section;
@@ -92,6 +93,33 @@ typedef struct _RTL_PROCESS_MODULES {
     ULONG NumberOfModules;
     RTL_PROCESS_MODULE_INFORMATION Modules[1];
 } RTL_PROCESS_MODULES, *PRTL_PROCESS_MODULES;
+
+//=============================================================================
+// BigPool Information (SystemBigPoolInformation = 0x42)
+//=============================================================================
+
+// Pool types
+#define NonPagedPool        0
+#define PagedPool           1
+#define NonPagedPoolNx      512
+
+// Big pool entry - returned by NtQuerySystemInformation(SystemBigPoolInformation)
+typedef struct _SYSTEM_BIGPOOL_ENTRY {
+    union {
+        PVOID VirtualAddress;
+        ULONG_PTR NonPaged : 1;  // Low bit indicates NonPagedPool
+    };
+    SIZE_T SizeInBytes;
+    union {
+        UCHAR Tag[4];
+        ULONG TagUlong;
+    };
+} SYSTEM_BIGPOOL_ENTRY, *PSYSTEM_BIGPOOL_ENTRY;
+
+typedef struct _SYSTEM_BIGPOOL_INFORMATION {
+    ULONG Count;
+    SYSTEM_BIGPOOL_ENTRY AllocatedInfo[1];  // Variable length array
+} SYSTEM_BIGPOOL_INFORMATION, *PSYSTEM_BIGPOOL_INFORMATION;
 
 //=============================================================================
 // NTDLL Function Pointer Types
