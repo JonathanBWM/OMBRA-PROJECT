@@ -21,12 +21,13 @@
 #include <stddef.h>  // For offsetof macro
 
 // MSVC compatibility for static assertions
-#if defined(__cplusplus)
+// MSVC uses static_assert in both C and C++ modes (compiler extension)
+#if defined(_MSC_VER)
     #define STATIC_ASSERT(expr, msg) static_assert(expr, msg)
-#elif defined(_MSC_VER)
-    // MSVC C mode uses _Static_assert in C11
-    #define STATIC_ASSERT(expr, msg) _Static_assert(expr, msg)
+#elif defined(__cplusplus)
+    #define STATIC_ASSERT(expr, msg) static_assert(expr, msg)
 #else
+    // GCC/Clang C11 mode
     #define STATIC_ASSERT(expr, msg) _Static_assert(expr, msg)
 #endif
 
