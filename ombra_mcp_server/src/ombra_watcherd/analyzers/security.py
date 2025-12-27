@@ -72,6 +72,26 @@ class SecurityAnalyzer(BaseAnalyzer):
     def name(self) -> str:
         return "security"
 
+    def _is_kernel_code(self, path: Path) -> bool:
+        """Check if this is kernel-mode code (higher risk for signatures)."""
+        path_str = str(path)
+        kernel_indicators = [
+            "/hypervisor/hypervisor/",  # VMX kernel code
+            "/hypervisor/driver/",       # Driver code
+        ]
+        return any(indicator in path_str for indicator in kernel_indicators)
+
+    def _is_usermode_code(self, path: Path) -> bool:
+        """Check if this is usermode code (lower signature risk)."""
+        path_str = str(path)
+        usermode_indicators = [
+            "/hypervisor/usermode/",
+            "/usermode/",
+            "/tools/",
+            "/ombra_mcp_server/",
+        ]
+        return any(indicator in path_str for indicator in usermode_indicators)
+
     def analyze(self, path: Path) -> List[Dict[str, Any]]:
         """Run security checks on a file."""
         findings = []
@@ -96,25 +116,49 @@ class SecurityAnalyzer(BaseAnalyzer):
         """Check for known hypervisor signatures."""
         findings = []
 
+        is_kernel = self._is_kernel_code(path)
+        is_usermode = self._is_usermode_code(path)
+
         for i, line in enumerate(lines, 1):
             # Skip comments
             stripped = line.strip()
-            if stripped.startswith("//") or stripped.startswith("*"):
+            if stripped.startswith("//") or stripped.startswith("*") or stripped.startswith("#"):
                 continue
 
             for sig in KNOWN_SIGNATURES:
                 if re.search(sig, line, re.IGNORECASE):
-                    # Don't flag if it's in a comment or string comparison
-                    if "strcmp" in line or "compare" in line.lower():
+                    # Skip if in a string comparison, debug output, or comment
+                    if any(marker in line for marker in ["strcmp", "compare", "DbgPrint", "printf", "KdPrint", "//"]):
                         continue
 
-                    findings.append(self.make_finding(
-                        severity="warning",
-                        check_id="signature_exposure",
-                        message=f"Potential signature exposure: '{sig}' pattern found",
-                        line=i,
-                        suggested_fix="Remove or obfuscate this string to avoid detection"
-                    ))
+                    # In kernel code, this is CRITICAL (runtime memory scanning)
+                    # In usermode, this is just INFO (not scanned at runtime)
+                    if is_kernel:
+                        # Check if it's in a string literal (runtime signature)
+                        if '"' in line and sig.lower() in line.lower():
+                            findings.append(self.make_finding(
+                                severity="critical",
+                                check_id="signature_exposure",
+                                message=f"Runtime signature in kernel memory: '{sig}' - will be scanned by anti-cheat",
+                                line=i,
+                                suggested_fix="Remove or obfuscate this string at runtime"
+                            ))
+                        else:
+                            findings.append(self.make_finding(
+                                severity="warning",
+                                check_id="signature_exposure",
+                                message=f"Potential signature in kernel code: '{sig}'",
+                                line=i,
+                                suggested_fix="Review if this creates a scannable signature"
+                            ))
+                    elif is_usermode:
+                        # Usermode signatures are low priority - not scanned at runtime
+                        findings.append(self.make_finding(
+                            severity="info",
+                            check_id="signature_exposure",
+                            message=f"Signature in usermode code: '{sig}' (low risk - not scanned at runtime)",
+                            line=i
+                        ))
 
         return findings
 
@@ -127,6 +171,8 @@ class SecurityAnalyzer(BaseAnalyzer):
         """Check for debug output that should be removed."""
         findings = []
 
+        is_kernel = self._is_kernel_code(path)
+
         for i, line in enumerate(lines, 1):
             # Skip if in DEBUG block
             for pattern in DEBUG_PATTERNS:
@@ -135,15 +181,17 @@ class SecurityAnalyzer(BaseAnalyzer):
                     context_start = max(0, i - 10)
                     context = "\n".join(lines[context_start:i])
 
-                    if "#ifdef DEBUG" in context or "#if DBG" in context:
+                    if "#ifdef DEBUG" in context or "#if DBG" in context or "#ifndef NDEBUG" in context:
                         continue
 
+                    # Kernel debug output is more serious (can be detected)
+                    severity = "warning" if is_kernel else "info"
                     findings.append(self.make_finding(
-                        severity="info",
+                        severity=severity,
                         check_id="debug_in_release",
-                        message=f"Debug output found - ensure removed in release",
+                        message=f"Debug output found - ensure removed in release build",
                         line=i,
-                        suggested_fix="Wrap in #ifdef DEBUG or remove"
+                        suggested_fix="Wrap in #ifdef DEBUG or remove for release"
                     ))
 
         return findings

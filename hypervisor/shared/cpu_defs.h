@@ -7,6 +7,11 @@
 #define CPUID_FEAT_ECX_HV   BIT(31)
 
 #define CR0_PE  BIT(0)
+#define CR0_MP  BIT(1)
+#define CR0_EM  BIT(2)
+#define CR0_TS  BIT(3)
+#define CR0_NE  BIT(5)
+#define CR0_WP  BIT(16)
 #define CR0_PG  BIT(31)
 #define CR4_VME BIT(0)
 #define CR4_PAE BIT(5)

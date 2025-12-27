@@ -3,6 +3,7 @@
 
 #include "exit_dispatch.h"
 #include "vmx.h"
+#include "nested.h"
 #include "handlers/handlers.h"
 #include "debug.h"
 #include "../shared/vmcs_fields.h"
@@ -74,12 +75,32 @@ VMEXIT_ACTION VmexitDispatch(GUEST_REGS* regs) {
         action = HandleEptViolation(regs, qualification);
         break;
 
+    case EXIT_REASON_EPT_MISCONFIG:
+        action = HandleEptMisconfiguration(regs, qualification);
+        break;
+
+    case EXIT_REASON_MONITOR:
+        action = HandleMonitor(regs);
+        break;
+
+    case EXIT_REASON_MWAIT:
+        action = HandleMwait(regs);
+        break;
+
+    case EXIT_REASON_PAUSE:
+        action = HandlePause(regs);
+        break;
+
     case EXIT_REASON_VMCALL:
         action = HandleVmcall(regs);
         break;
 
     case EXIT_REASON_EXCEPTION_NMI:
         action = HandleException(regs);
+        break;
+
+    case EXIT_REASON_MTF:
+        action = HandleMtf(regs);
         break;
 
     case EXIT_REASON_IO_INSTRUCTION:
@@ -113,25 +134,60 @@ VMEXIT_ACTION VmexitDispatch(GUEST_REGS* regs) {
     case EXIT_REASON_VMCLEAR:
     case EXIT_REASON_VMPTRLD:
     case EXIT_REASON_VMPTRST:
-    case EXIT_REASON_INVEPT:
-    case EXIT_REASON_INVVPID:
-        // VMX instructions from guest - inject #UD (undefined opcode)
-        // Since we hide VMX capability, these instructions should fault
-        TRACE("Guest executed VMX instruction (reason=%u), injecting #UD", reason);
-        {
-            // VM-entry interruption-information field format:
-            // Bits 7:0   = Vector (6 = #UD)
-            // Bits 10:8  = Type (3 = Hardware exception)
-            // Bit 11     = Deliver error code (0 for #UD)
-            // Bit 31     = Valid
+        // VMX instructions from guest
+        // Check if we're running nested and should forward to L0/emulate for L2
+        if (NestedIsRunningNested() && cpu) {
+            // We're running under an L0 hypervisor - forward VMX instruction
+            // This allows nested L2 guests to use VMX (emulated by L0)
+            TRACE("Forwarding VMX instruction to nested handler (reason=%u)", reason);
+            NestedHandleVmxInstruction(cpu, reason);
+            action = VMEXIT_ADVANCE_RIP;
+        } else {
+            // Bare metal or no nested support - inject #UD
+            // Since we hide VMX capability, these instructions should fault
+            TRACE("Guest executed VMX instruction (reason=%u), injecting #UD", reason);
             U32 intInfo = 6;                    // #UD vector
             intInfo |= (3 << 8);                // Hardware exception
             intInfo |= (1UL << 31);             // Valid
-
             VmcsWrite(VMCS_CTRL_VMENTRY_INT_INFO, intInfo);
             VmcsWrite(VMCS_CTRL_VMENTRY_INSTR_LEN, VmcsRead(VMCS_EXIT_INSTR_LEN));
+            action = VMEXIT_CONTINUE;  // Don't advance RIP - exception injection
         }
-        action = VMEXIT_CONTINUE;  // Don't advance RIP
+        break;
+
+    case EXIT_REASON_INVEPT:
+        // INVEPT - Invalidate EPT translations
+        // Handled separately as it's commonly used by nested hypervisors
+        if (NestedIsRunningNested() && cpu) {
+            TRACE("INVEPT from nested guest, forwarding to L0");
+            NestedHandleVmxInstruction(cpu, reason);
+            action = VMEXIT_ADVANCE_RIP;
+        } else {
+            // No VMX exposed - inject #UD
+            TRACE("INVEPT from guest, injecting #UD (VMX not exposed)");
+            U32 intInfo = 6 | (3 << 8) | (1UL << 31);
+            VmcsWrite(VMCS_CTRL_VMENTRY_INT_INFO, intInfo);
+            VmcsWrite(VMCS_CTRL_VMENTRY_INSTR_LEN, VmcsRead(VMCS_EXIT_INSTR_LEN));
+            action = VMEXIT_CONTINUE;
+        }
+        break;
+
+    case EXIT_REASON_INVVPID:
+        // INVVPID - Invalidate VPID translations
+        // Distinct from INVEPT: VPID tags translations per-virtual-processor
+        // INVEPT clears EPT-specific translations
+        if (NestedIsRunningNested() && cpu) {
+            TRACE("INVVPID from nested guest, forwarding to L0");
+            NestedHandleVmxInstruction(cpu, reason);
+            action = VMEXIT_ADVANCE_RIP;
+        } else {
+            // No VMX exposed - inject #UD
+            TRACE("INVVPID from guest, injecting #UD (VMX not exposed)");
+            U32 intInfo = 6 | (3 << 8) | (1UL << 31);
+            VmcsWrite(VMCS_CTRL_VMENTRY_INT_INFO, intInfo);
+            VmcsWrite(VMCS_CTRL_VMENTRY_INSTR_LEN, VmcsRead(VMCS_EXIT_INSTR_LEN));
+            action = VMEXIT_CONTINUE;
+        }
         break;
 
     case EXIT_REASON_XSETBV:

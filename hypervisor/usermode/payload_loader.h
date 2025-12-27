@@ -1,5 +1,4 @@
-// payload_loader.h — Hypervisor Payload Loader
-// OmbraHypervisor
+// payload_loader.h — Payload Loader
 
 #ifndef PAYLOAD_LOADER_H
 #define PAYLOAD_LOADER_H
@@ -7,7 +6,7 @@
 #include "driver_interface.h"
 
 // =============================================================================
-// Per-CPU Structure (mirrors hypervisor's VMX_CPU)
+// Per-CPU Structure (mirrors VMX_CPU)
 // =============================================================================
 
 typedef struct _CPU_CONTEXT {
@@ -32,7 +31,7 @@ typedef struct _CPU_CONTEXT {
 } CPU_CONTEXT;
 
 // =============================================================================
-// Hypervisor Context
+// Context
 // =============================================================================
 
 #define MAX_CPUS 256
@@ -45,8 +44,8 @@ typedef struct _HV_CONTEXT {
     uint32_t        NumCpus;
     CPU_CONTEXT     Cpus[MAX_CPUS];
 
-    // Hypervisor code region
-    ALLOC_INFO      HypervisorCode;
+    // Code region
+    ALLOC_INFO      PayloadCode;
 
     // EPT tables (shared across CPUs)
     ALLOC_INFO      EptTables;
@@ -66,13 +65,13 @@ typedef struct _HV_CONTEXT {
 // Function Declarations
 // =============================================================================
 
-// Load and start hypervisor
+// Load and start payload
 bool HvLoad(HV_CONTEXT* ctx, const wchar_t* driverPath, const void* payload, size_t payloadSize);
 
-// Stop and unload hypervisor
+// Stop and unload payload
 bool HvUnload(HV_CONTEXT* ctx);
 
-// Check if hypervisor is running (via VMCALL)
+// Check if payload is running (via VMCALL)
 bool HvIsRunning(HV_CONTEXT* ctx);
 
 // Internal helpers

@@ -3,6 +3,7 @@
 
 #include "handlers.h"
 #include "../vmx.h"
+#include "../timing.h"
 #include "../../shared/vmcs_fields.h"
 #include "../../shared/cpu_defs.h"
 #include <intrin.h>
@@ -88,6 +89,8 @@ static void SetRegisterValue(GUEST_REGS* regs, U32 regIndex, U64 value) {
 // =============================================================================
 
 VMEXIT_ACTION HandleCrAccess(GUEST_REGS* regs, U64 qualification) {
+    U64 entryTsc = TimingStart();
+    VMX_CPU* cpu = VmxGetCurrentCpu();
     U32 crNumber;
     U32 accessType;
     U32 regIndex;
@@ -138,9 +141,14 @@ VMEXIT_ACTION HandleCrAccess(GUEST_REGS* regs, U64 qualification) {
             break;
 
         case 8:
-            // MOV to CR8 (TPR) - not commonly used, pass through
-            // In a real implementation with APIC virtualization, this
-            // would update the virtual APIC page
+            // MOV to CR8 (TPR - Task Priority Register)
+            // CR8 controls interrupt priority threshold in 64-bit mode
+            // Without APIC virtualization, we shadow it in VMX_CPU state
+            cpu->GuestCr8 = value & 0x0F;  // Only lower 4 bits valid (priority 0-15)
+
+            // If interrupts are pending and new TPR allows them, update pending debug
+            // This is a simplified implementation - full TPR virtualization would
+            // integrate with local APIC TPR (0x80) and check pending interrupt priority
             break;
         }
         break;
@@ -164,7 +172,7 @@ VMEXIT_ACTION HandleCrAccess(GUEST_REGS* regs, U64 qualification) {
 
         case 8:
             // MOV from CR8 - read current TPR
-            value = 0;  // Default if no APIC virtualization
+            value = cpu->GuestCr8 & 0x0F;  // Return shadowed value
             break;
 
         default:
@@ -178,7 +186,7 @@ VMEXIT_ACTION HandleCrAccess(GUEST_REGS* regs, U64 qualification) {
     case CR_ACCESS_TYPE_CLTS:
         // CLTS - Clear Task-Switched flag in CR0
         guestCr0 = VmcsRead(VMCS_GUEST_CR0);
-        guestCr0 &= ~(1ULL << 3);  // Clear TS bit
+        guestCr0 &= ~CR0_TS;  // Clear TS bit (bit 3)
         VmcsWrite(VMCS_GUEST_CR0, guestCr0);
         VmcsWrite(VMCS_CTRL_CR0_SHADOW, guestCr0);
         break;
@@ -201,5 +209,6 @@ VMEXIT_ACTION HandleCrAccess(GUEST_REGS* regs, U64 qualification) {
         break;
     }
 
+    if (cpu) TimingEnd(cpu, entryTsc, TIMING_CR_OVERHEAD);
     return VMEXIT_ADVANCE_RIP;
 }

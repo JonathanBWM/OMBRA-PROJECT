@@ -3,6 +3,7 @@
 
 #include "handlers.h"
 #include "../debug.h"
+#include "../timing.h"
 #include "../vmx.h"
 #include "../../shared/msr_defs.h"
 #include "../../shared/vmcs_fields.h"
@@ -24,6 +25,11 @@
 
 // IA32_DEBUGCTL - debug control (may reveal single-stepping)
 #define MSR_IA32_DEBUGCTL           0x1D9
+
+// APERF/MPERF MSRs (CRITICAL: ESEA monitors ratio for hypervisor detection)
+// MCP verified: get_msr_info("IA32_APERF") -> 0xE8, get_msr_info("IA32_MPERF") -> 0xE7
+#define MSR_IA32_MPERF              0xE7   // Maximum Performance Frequency Clock
+#define MSR_IA32_APERF              0xE8   // Actual Performance Frequency Clock
 
 // Exception vectors
 #define EXCEPTION_GP                13
@@ -49,7 +55,7 @@ static VMEXIT_ACTION InjectGpFault(void) {
     interruptInfo |= (1UL << 31);           // Valid
 
     VmcsWrite(VMCS_CTRL_VMENTRY_INT_INFO, interruptInfo);
-    VmcsWrite(VMCS_CTRL_VMENTRY_EXCEPTION_ERR, 0);  // Error code = 0
+    VmcsWrite(VMCS_CTRL_VMENTRY_EXCEPTION_CODE, 0);  // Error code = 0
     VmcsWrite(VMCS_CTRL_VMENTRY_INSTR_LEN, VmcsRead(VMCS_EXIT_INSTR_LEN));
 
     TRACE("Injecting #GP(0) for MSR access");
@@ -63,6 +69,12 @@ static VMEXIT_ACTION InjectGpFault(void) {
 VMEXIT_ACTION HandleRdmsr(GUEST_REGS* regs) {
     U32 msr = (U32)regs->Rcx;
     U64 value;
+    VMX_CPU* cpu;
+    U64 entryTsc;
+
+    // TIMING COMPENSATION: Capture TSC at handler entry
+    // Anti-cheat may measure RDMSR timing to detect hypervisors
+    entryTsc = TimingStart();
 
     // Handle MSRs that need virtualization for stealth
     switch (msr) {
@@ -91,6 +103,37 @@ VMEXIT_ACTION HandleRdmsr(GUEST_REGS* regs) {
         // A CPU without VMX support would fault on these reads
         return InjectGpFault();
 
+    case MSR_IA32_TSC_AUX:
+        // Return virtualized processor ID for RDTSCP consistency
+        // Guest sees same value across VM-exits maintaining affinity illusion
+        cpu = VmxGetCurrentCpu();
+        value = cpu ? cpu->GuestTscAux : __readmsr(msr);
+        break;
+
+    case MSR_IA32_MPERF:
+        // MPERF virtualization - compensate for VM-exit overhead
+        // CRITICAL: ESEA monitors APERF/MPERF ratio to detect hypervisors
+        // We subtract accumulated offset to make overhead invisible
+        cpu = VmxGetCurrentCpu();
+        if (cpu) {
+            value = __readmsr(MSR_IA32_MPERF) - cpu->MperfOffset;
+        } else {
+            value = __readmsr(MSR_IA32_MPERF);
+        }
+        break;
+
+    case MSR_IA32_APERF:
+        // APERF virtualization - compensate for VM-exit overhead
+        // CRITICAL: ESEA monitors APERF/MPERF ratio to detect hypervisors
+        // We subtract accumulated offset to make overhead invisible
+        cpu = VmxGetCurrentCpu();
+        if (cpu) {
+            value = __readmsr(MSR_IA32_APERF) - cpu->AperfOffset;
+        } else {
+            value = __readmsr(MSR_IA32_APERF);
+        }
+        break;
+
     default:
         // Pass through all other MSRs
         value = __readmsr(msr);
@@ -100,6 +143,12 @@ VMEXIT_ACTION HandleRdmsr(GUEST_REGS* regs) {
     // Return value in EDX:EAX
     regs->Rax = (U32)value;
     regs->Rdx = (U32)(value >> 32);
+
+    // TIMING COMPENSATION: Apply compensation before returning to guest
+    cpu = VmxGetCurrentCpu();
+    if (cpu) {
+        TimingEnd(cpu, entryTsc, TIMING_MSR_OVERHEAD);
+    }
 
     return VMEXIT_ADVANCE_RIP;
 }
@@ -111,6 +160,11 @@ VMEXIT_ACTION HandleRdmsr(GUEST_REGS* regs) {
 VMEXIT_ACTION HandleWrmsr(GUEST_REGS* regs) {
     U32 msr = (U32)regs->Rcx;
     U64 value = ((U64)regs->Rdx << 32) | (regs->Rax & 0xFFFFFFFF);
+    VMX_CPU* cpu;
+    U64 entryTsc;
+
+    // TIMING COMPENSATION: Capture TSC at handler entry
+    entryTsc = TimingStart();
 
     // Handle MSRs that need special treatment
     switch (msr) {
@@ -146,6 +200,16 @@ VMEXIT_ACTION HandleWrmsr(GUEST_REGS* regs) {
         __writemsr(msr, value);
         break;
 
+    case MSR_IA32_TSC_AUX:
+        // Virtualize IA32_TSC_AUX writes - store in per-CPU state
+        // This ensures RDTSCP returns guest's expected processor ID
+        cpu = VmxGetCurrentCpu();
+        if (cpu) {
+            cpu->GuestTscAux = (U32)value;
+        }
+        // Don't write to real MSR - keep host value intact
+        break;
+
     default:
         // Range check for VMX MSRs - silently ignore
         if (msr >= MSR_VMX_RANGE_START && msr <= MSR_VMX_RANGE_END) {
@@ -156,6 +220,12 @@ VMEXIT_ACTION HandleWrmsr(GUEST_REGS* regs) {
         // Pass through all other MSR writes
         __writemsr(msr, value);
         break;
+    }
+
+    // TIMING COMPENSATION: Apply compensation before returning to guest
+    cpu = VmxGetCurrentCpu();
+    if (cpu) {
+        TimingEnd(cpu, entryTsc, TIMING_MSR_OVERHEAD);
     }
 
     return VMEXIT_ADVANCE_RIP;

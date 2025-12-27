@@ -83,6 +83,7 @@ from .project_brain import (
     get_findings,
     dismiss_finding,
     get_suggestions,
+    get_priority_work,
     get_component,
     get_exit_handler_status,
     add_decision,
@@ -94,6 +95,7 @@ from .project_brain import (
     save_session_context,
     refresh_analysis,
     get_daemon_status,
+    seed_components,
 )
 
 __all__ = [
@@ -156,6 +158,7 @@ __all__ = [
     "get_findings",
     "dismiss_finding",
     "get_suggestions",
+    "get_priority_work",
     "get_component",
     "get_exit_handler_status",
     "add_decision",
@@ -167,4 +170,5 @@ __all__ = [
     "save_session_context",
     "refresh_analysis",
     "get_daemon_status",
+    "seed_components",
 ]

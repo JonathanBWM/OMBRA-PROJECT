@@ -1,19 +1,23 @@
-// main.c — OmbraHypervisor Loader Entry Point
+// main.c — Loader Entry Point
 // BYOVD loader using Ld9BoxSup.sys
 
 #include <stdio.h>
 #include <stdlib.h>
 #include <Windows.h>
 #include "driver_interface.h"
-#include "payload_loader.h"
+#include "loader/hv_loader.h"
 #include "debug_reader.h"
+#include "obfuscate.h"
 
 // =============================================================================
 // Configuration
 // =============================================================================
 
 #define DRIVER_FILENAME     L"Ld9BoxSup.sys"
-#define PAYLOAD_FILENAME    "hypervisor.bin"
+// Payload filename retrieved via obfuscation
+static const char* GetPayloadFilename(void) {
+    return DEC_HV_BIN();
+}
 #define DEBUG_POLL_INTERVAL 10  // ms
 
 // =============================================================================
@@ -24,26 +28,26 @@ static volatile BOOL g_DebugMonitorRunning = FALSE;
 static DebugReader g_DebugReader = {0};
 
 static DWORD WINAPI DebugMonitorThread(LPVOID param) {
-    HV_CONTEXT* ctx = (HV_CONTEXT*)param;
+    HV_LOADER_CTX* ctx = (HV_LOADER_CTX*)param;
     DebugEntry entry;
     DWORD waitTime = DEBUG_POLL_INTERVAL;
 
-    // Wait for hypervisor to initialize the debug buffer
-    printf("[DBG] Debug monitor thread started, waiting for hypervisor...\n");
+    // Wait for payload to initialize the debug buffer
+    DBG_PRINTF("[DBG] Debug monitor thread started, waiting for payload...\n");
 
-    // Give hypervisor time to initialize
+    // Give payload time to initialize
     Sleep(100);
 
     // Initialize reader
-    void* debugBuf = HvGetDebugBuffer(ctx);
-    size_t debugSize = HvGetDebugBufferSize(ctx);
+    void* debugBuf = HvLoaderGetDebugBuffer(ctx);
+    size_t debugSize = HvLoaderGetDebugBufferSize(ctx);
 
     if (!debugBuf || !debugSize) {
         printf("[DBG] No debug buffer available\n");
         return 1;
     }
 
-    // Try to initialize reader - may fail if hypervisor hasn't set up the buffer yet
+    // Try to initialize reader - may fail if payload hasn't set up the buffer yet
     int retries = 50;  // 5 seconds max
     while (retries-- > 0 && !DbgReaderInit(&g_DebugReader, debugBuf, debugSize)) {
         Sleep(100);
@@ -153,10 +157,10 @@ static bool CheckPrivileges(void) {
 // =============================================================================
 
 int main(int argc, char* argv[]) {
-    printf("===========================================\n");
-    printf("  OmbraHypervisor Loader\n");
-    printf("  BYOVD via Ld9BoxSup.sys\n");
-    printf("===========================================\n\n");
+    DBG_PRINTF("===========================================\n");
+    DBG_PRINTF("  %s\n", DEC_LOADER_TITLE());
+    DBG_PRINTF("  BYOVD via Ld9BoxSup.sys\n");
+    DBG_PRINTF("===========================================\n\n");
 
     // Check for admin privileges
     if (!CheckPrivileges()) {
@@ -178,23 +182,32 @@ int main(int argc, char* argv[]) {
     }
     printf("[+] Driver file found\n");
 
-    // Load hypervisor payload
+    // Load payload
     size_t payloadSize = 0;
-    void* payload = LoadPayload(PAYLOAD_FILENAME, &payloadSize);
+    const char* payloadFile = GetPayloadFilename();
+    void* payload = LoadPayload(payloadFile, &payloadSize);
     if (!payload) {
-        printf("[-] Failed to load hypervisor payload\n");
-        printf("[!] Ensure %s is in the same directory as this executable\n", PAYLOAD_FILENAME);
+        printf("[-] Failed to load payload\n");
+        printf("[!] Ensure payload file is in the same directory as this executable\n");
         return 1;
     }
     printf("[+] Loaded payload: %zu bytes\n", payloadSize);
 
-    // Initialize hypervisor context
-    HV_CONTEXT hvCtx;
+    // Initialize loader context
+    HV_LOADER_CTX hvCtx = {0};
 
-    // Load and launch hypervisor
-    if (!HvLoad(&hvCtx, driverPath, payload, payloadSize)) {
+    // Initialize driver and establish session
+    if (!HvLoaderInit(&hvCtx, driverPath)) {
+        printf("[-] Failed to initialize loader\n");
+        free(payload);
+        return 1;
+    }
+
+    // Load hypervisor into kernel and launch
+    if (!HvLoaderLoad(&hvCtx, payload, (U32)payloadSize)) {
         printf("[-] Failed to load hypervisor\n");
         free(payload);
+        HvLoaderCleanup(&hvCtx);
         return 1;
     }
 
@@ -209,9 +222,9 @@ int main(int argc, char* argv[]) {
     }
 
     // Check if running
-    if (HvIsRunning(&hvCtx)) {
+    if (HvLoaderIsRunning(&hvCtx)) {
         printf("\n[+] Hypervisor is active!\n");
-        printf("[*] Debug output will appear above\n");
+        DBG_PRINTF("[*] Debug output will appear above\n");
         printf("[*] Press Enter to unload...\n");
         getchar();
     } else {
@@ -227,8 +240,9 @@ int main(int argc, char* argv[]) {
         CloseHandle(hDebugThread);
     }
 
-    // Unload
-    HvUnload(&hvCtx);
+    // Unload hypervisor and cleanup
+    HvLoaderUnload(&hvCtx);
+    HvLoaderCleanup(&hvCtx);
 
     printf("[+] Done\n");
     return 0;

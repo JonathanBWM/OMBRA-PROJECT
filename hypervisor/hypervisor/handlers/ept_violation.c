@@ -6,6 +6,7 @@
 #include "../ept.h"
 #include "../hooks.h"
 #include "../debug.h"
+#include "../timing.h"
 #include "../../shared/vmcs_fields.h"
 #include "../../shared/ept_defs.h"
 
@@ -32,6 +33,7 @@
 // =============================================================================
 
 VMEXIT_ACTION HandleEptViolation(GUEST_REGS* regs, U64 qualification) {
+    U64 entryTsc = TimingStart();
     U64 guestPhysical;
     U64 guestLinear;
     bool wasRead;
@@ -67,16 +69,24 @@ VMEXIT_ACTION HandleEptViolation(GUEST_REGS* regs, U64 qualification) {
     // 2. We switch to a shadow page that allows the operation
     // 3. Single-step and switch back for execute-only hook
 
-    // Get hook manager from global state (would need proper initialization)
-    // For now, this is a placeholder - actual integration requires passing
-    // the hook manager through the CPU structure
-    //
-    // if (cpu && cpu->Ept) {
-    //     extern HOOK_MANAGER g_HookManager;
-    //     if (HookHandleEptViolation(&g_HookManager, guestPhysical, qualification, regs)) {
-    //         return VMEXIT_CONTINUE;  // Hook handled it
-    //     }
-    // }
+    // Check if hook manager is initialized and has this violation
+    if (cpu && cpu->Ept) {
+        extern HOOK_MANAGER g_HookManager;
+        if (g_HookManager.Initialized) {
+            // Try shadow hook handler first (execute-only page hooks)
+            if (HookHandleEptViolationShadow(&g_HookManager, guestPhysical,
+                                             wasRead, wasWrite, wasExecute)) {
+                if (cpu) TimingEnd(cpu, entryTsc, TIMING_EPT_OVERHEAD);
+                return VMEXIT_CONTINUE;  // Shadow hook handled it
+            }
+
+            // Try legacy hook handler
+            if (HookHandleEptViolation(&g_HookManager, guestPhysical, qualification, regs)) {
+                if (cpu) TimingEnd(cpu, entryTsc, TIMING_EPT_OVERHEAD);
+                return VMEXIT_CONTINUE;  // Hook handled it
+            }
+        }
+    }
 
     // =========================================================================
     // MMIO Region Check
@@ -117,6 +127,7 @@ VMEXIT_ACTION HandleEptViolation(GUEST_REGS* regs, U64 qualification) {
         ERR("EPT violation: access beyond 512GB map (GPA=0x%llx)", guestPhysical);
         // This is a guest bug - inject #PF or return error
         // For now, just advance RIP (will likely cause guest crash)
+        if (cpu) TimingEnd(cpu, entryTsc, TIMING_EPT_OVERHEAD);
         return VMEXIT_ADVANCE_RIP;
     }
 
@@ -128,5 +139,6 @@ VMEXIT_ACTION HandleEptViolation(GUEST_REGS* regs, U64 qualification) {
 
     // Re-execute the instruction
     // (The identity map should allow it next time)
+    if (cpu) TimingEnd(cpu, entryTsc, TIMING_EPT_OVERHEAD);
     return VMEXIT_CONTINUE;
 }

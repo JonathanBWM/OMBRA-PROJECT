@@ -56,6 +56,11 @@ typedef struct _SEGMENT_STATE {
 } SEGMENT_STATE;
 
 // =============================================================================
+// Forward declaration for nested state
+// =============================================================================
+struct _NESTED_STATE;
+
+// =============================================================================
 // Per-CPU VMX State
 // =============================================================================
 
@@ -84,6 +89,9 @@ typedef struct _VMX_CPU {
     // EPT State (shared, pointer to global)
     struct _EPT_STATE* Ept;
 
+    // Nested virtualization state (shared, pointer to global)
+    struct _NESTED_STATE* Nested;
+
     // VMX state
     bool    VmxEnabled;         // VMXON executed
     bool    VmcsLoaded;         // VMPTRLD executed
@@ -101,6 +109,36 @@ typedef struct _VMX_CPU {
     // Timing compensation
     U64     TscOffset;          // Accumulated TSC offset for stealth
     U64     LastTsc;            // Last TSC value returned to guest
+    U64     TscResetCounter;    // VM-exits since last TSC reset
+    U64     TscCumulativeOffset;// Total offset before last reset (for continuity)
+
+    // APERF/MPERF compensation (CRITICAL: ESEA monitors ratio)
+    // MCP verified: IA32_APERF=0xE8, IA32_MPERF=0xE7
+    U64     AperfOffset;        // Accumulated APERF offset for anti-detection
+    U64     MperfOffset;        // Accumulated MPERF offset for anti-detection
+
+    // Calibrated timing values
+    bool    TimingCalibrated;
+    U64     CalibratedCpuidOverhead;
+    U64     CalibratedRdtscBaseline;
+    U64     CalibratedMsrOverhead;
+
+    // MSR virtualization
+    U32     GuestTscAux;        // Virtualized IA32_TSC_AUX (processor ID)
+
+    // CR8 (TPR) virtualization
+    U64     GuestCr8;           // Shadow CR8 value (Task Priority Register)
+
+    // NMI blocking for EAC evasion
+    // EAC sends NMIs to detect hypervisors - we queue them for specific CR3s
+    #define MAX_NMI_BLOCKED_CR3 16
+    U64     NmiBlockedCr3[MAX_NMI_BLOCKED_CR3];  // CR3s that should have NMIs blocked
+    U32     NmiBlockedCount;                     // Active blocked CR3 entries
+    U32     NmiQueuedCount;                      // NMIs waiting to be delivered
+    bool    NmiBlockingEnabled;                  // Master switch for NMI blocking
+
+    // Shutdown coordination
+    bool    ShutdownPending;    // VMXOFF requested for this CPU
 
     // Self-reference for assembly access
     struct _VMX_CPU* Self;
@@ -128,6 +166,14 @@ typedef struct _HV_INIT_PARAMS {
     // Shared EPT
     U64     EptPml4Physical;
     void*   EptPml4Virtual;
+
+    // Shadow VMCS resources (shared across CPUs, for nested virtualization)
+    U64     VmreadBitmapPhysical;   // 4KB, controls VMREAD shadowing
+    U64     VmwriteBitmapPhysical;  // 4KB, controls VMWRITE shadowing
+    U64     ShadowVmcsPhysical;     // 4KB, shadow VMCS for L2 guests
+    void*   VmreadBitmapVirtual;
+    void*   VmwriteBitmapVirtual;
+    void*   ShadowVmcsVirtual;
 
     // VMX MSRs (pre-fetched by usermode)
     U64     VmxBasic;

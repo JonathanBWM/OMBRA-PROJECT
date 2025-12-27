@@ -18,7 +18,17 @@ from .database import ProjectBrainDB, DEFAULT_DB_PATH
 
 PLIST_PATH = Path.home() / "Library" / "LaunchAgents" / "com.ombra.watcherd.plist"
 LOG_PATH = Path.home() / "Library" / "Logs" / "ombra-watcherd.log"
-WATCH_PATH = Path("/Users/jonathanmcclintock/PROJECT-OMBRA")
+
+# Auto-detect project root from package location or environment variable
+# __file__ is src/ombra_watcherd/launchd.py -> .parent.parent.parent.parent = PROJECT-OMBRA
+def _get_project_root() -> Path:
+    """Detect project root via environment or package location."""
+    if "OMBRA_PROJECT_ROOT" in os.environ:
+        return Path(os.environ["OMBRA_PROJECT_ROOT"])
+    # Fallback: derive from package location (src/ombra_watcherd/launchd.py)
+    return Path(__file__).resolve().parent.parent.parent.parent
+
+WATCH_PATH = _get_project_root()
 
 # Get the Python interpreter from the ombra_mcp_server venv
 # __file__ is src/ombra_watcherd/launchd.py, so .parent.parent.parent is ombra_mcp_server/

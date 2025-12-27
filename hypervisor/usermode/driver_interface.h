@@ -116,6 +116,12 @@ DRV_STATUS  DrvGetSymbol(DRV_CONTEXT* ctx, const char* name, void** addr);
 DRV_STATUS  DrvReadMsr(DRV_CONTEXT* ctx, uint32_t msr, uint32_t cpu, uint64_t* value);
 DRV_STATUS  DrvWriteMsr(DRV_CONTEXT* ctx, uint32_t msr, uint32_t cpu, uint64_t value);
 
+// Module Loading (LDR_OPEN / LDR_LOAD)
+DRV_STATUS  DrvLdrOpen(DRV_CONTEXT* ctx, uint32_t imageSize, void** ppImageBase);
+DRV_STATUS  DrvLdrLoad(DRV_CONTEXT* ctx, void* imageBase, const void* imageData,
+                       uint32_t imageSize, void* entryPoint);
+DRV_STATUS  DrvLdrFree(DRV_CONTEXT* ctx, void* imageBase);
+
 // Utility
 const char* DrvStatusString(DRV_STATUS status);
 

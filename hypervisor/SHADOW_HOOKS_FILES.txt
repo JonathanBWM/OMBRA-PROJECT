@@ -1,0 +1,51 @@
+Shadow Hook Implementation - Modified Files
+============================================
+
+Headers Modified:
+-----------------
+/Users/jonathanmcclintock/PROJECT-OMBRA/hypervisor/hypervisor/hooks.h
+/Users/jonathanmcclintock/PROJECT-OMBRA/hypervisor/hypervisor/handlers/handlers.h
+
+Implementation Files Modified:
+-------------------------------
+/Users/jonathanmcclintock/PROJECT-OMBRA/hypervisor/hypervisor/hooks.c
+/Users/jonathanmcclintock/PROJECT-OMBRA/hypervisor/hypervisor/handlers/ept_violation.c
+/Users/jonathanmcclintock/PROJECT-OMBRA/hypervisor/hypervisor/exit_dispatch.c
+
+New Files Created:
+------------------
+/Users/jonathanmcclintock/PROJECT-OMBRA/hypervisor/hypervisor/handlers/mtf.c
+
+Documentation:
+--------------
+/Users/jonathanmcclintock/PROJECT-OMBRA/hypervisor/SHADOW_HOOKS_IMPLEMENTATION.md
+/Users/jonathanmcclintock/PROJECT-OMBRA/hypervisor/SHADOW_HOOKS_FILES.txt
+
+Reference Documentation:
+------------------------
+/Users/jonathanmcclintock/PROJECT-OMBRA/hypervisor/docs/ombra_reference_c/ept_npt/03_shadow_hooks.c
+
+Key Constants Used:
+-------------------
+MAX_SHADOW_HOOKS = 64 (hooks.h)
+TRAMPOLINE_SIZE = 32 (hooks.h)
+EXIT_REASON_MTF = 37 (shared/exit_reasons.h)
+CPU_MONITOR_TRAP = (1ULL << 27) (shared/vmcs_fields.h)
+VMCS_CTRL_PROC_BASED = 0x4002 (shared/vmcs_fields.h)
+
+Summary of Changes:
+-------------------
+- Added SHADOW_HOOK structure for dual-view hooks
+- Implemented HookInstallShadow() for execute-only EPT hooks
+- Implemented HookHandleEptViolationShadow() for view switching
+- Implemented HookHandleMtf() for MTF-based restoration
+- Created HandleMtf() exit handler
+- Integrated shadow hooks into EPT violation handler
+- Added MTF case to exit dispatcher
+- Includes trampoline generation and helper functions
+- Thread-safe with spinlock protection
+- Full debug logging support
+
+Total Lines Added: ~500 lines
+New Handler: mtf.c (43 lines)
+Functions Added: 8 public + 2 static helpers

@@ -7,8 +7,21 @@
 
 #include "supdrv.h"
 #include "nt_defs.h"
+#include "../obfuscate.h"
 #include <stdio.h>
 #include <string.h>
+
+// Obfuscated module identifiers (decrypted at runtime)
+static void GetModuleName(char* buf, size_t len) {
+    // Returns "SysCore" or similar innocuous name
+    const char* dec = DEC_OMBRAHV();
+    strncpy_s(buf, len, dec, _TRUNCATE);
+}
+
+static void GetModulePath(char* buf, size_t len) {
+    // Returns "C:\Windows\System32\drivers\syscore.sys" pattern
+    snprintf(buf, len, "C:\\Windows\\System32\\drivers\\%s.sys", DEC_OMBRAHV());
+}
 
 //=============================================================================
 // Error Handling
@@ -312,8 +325,8 @@ bool SupDrv_LdrOpen(PSUPDRV_CTX ctx, UINT32 cbImage, void** ppvImageBase) {
 
     req.u.In.cbImageWithTabs = cbImage;
     req.u.In.cbImageBits = cbImage;
-    strcpy_s(req.u.In.szName, sizeof(req.u.In.szName), "OmbraHV");
-    strcpy_s(req.u.In.szFilename, sizeof(req.u.In.szFilename), "C:\\OmbraHV.sys");
+    GetModuleName(req.u.In.szName, sizeof(req.u.In.szName));
+    GetModulePath(req.u.In.szFilename, sizeof(req.u.In.szFilename));
 
     if (!SupDrv_DoIoctl(ctx, SUP_IOCTL_LDR_OPEN,
                         &req, LDR_OPEN_SIZE_IN,

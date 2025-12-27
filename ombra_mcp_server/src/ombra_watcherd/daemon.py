@@ -54,6 +54,14 @@ IGNORE_PATTERNS = {
     "*.log",
     "*.tmp",
     "node_modules",
+    # Reference/research code - not our implementation
+    "/docs/old_ombra_project/",
+    "/docs/Antidetection-Research/",
+    "CODEBASE-REF",
+    # Third-party dependencies
+    "/vendor/",
+    "/third_party/",
+    "/external/",
 }
 
 # Extensions we care about
@@ -167,9 +175,25 @@ class OmbraWatcherd:
         self.processor_thread = threading.Thread(target=self._process_loop, daemon=True)
         self.processor_thread.start()
 
-        # Initial scan
-        logger.info("Running initial scan...")
-        self.scan_all()
+        # Check if a recent scan was done (within last 10 minutes)
+        # This prevents CPU-intensive rescans when daemon restarts
+        should_scan = True
+        try:
+            last_scan = self.db.get_state("last_full_scan")
+            if last_scan:
+                last_scan_time = datetime.fromisoformat(last_scan)
+                minutes_since = (datetime.now() - last_scan_time).total_seconds() / 60
+                if minutes_since < 10:
+                    logger.info(f"Skipping initial scan - last scan was {minutes_since:.1f} minutes ago")
+                    should_scan = False
+        except Exception as e:
+            logger.warning(f"Could not check last scan time: {e}")
+
+        if should_scan:
+            logger.info("Running initial scan...")
+            self.scan_all()
+        else:
+            logger.info("Daemon ready - watching for file changes")
 
         # Keep running
         try:

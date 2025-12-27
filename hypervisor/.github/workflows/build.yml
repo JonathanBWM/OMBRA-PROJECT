@@ -2,43 +2,188 @@ name: Build OmbraHypervisor
 
 on:
   push:
-    branches: [ main, develop ]
+    branches: [ main, develop, 'feature/**' ]
   pull_request:
-    branches: [ main ]
+    branches: [ main, develop ]
   workflow_dispatch:
 
+env:
+  BUILD_TYPE: Release
+
 jobs:
-  build:
+  build-hypervisor:
+    name: Build Hypervisor Core
     runs-on: windows-latest
+
     steps:
-    - uses: actions/checkout@v4
-    
+    - name: Checkout repository
+      uses: actions/checkout@v4
+      with:
+        submodules: recursive
+
     - name: Setup MSBuild
       uses: microsoft/setup-msbuild@v2
 
-    - name: Build usermode
+    - name: Setup Visual Studio Developer Command Prompt
+      uses: ilammy/msvc-dev-cmd@v1
+      with:
+        arch: x64
+
+    - name: Verify MASM availability
       shell: cmd
       run: |
-        call "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvars64.bat"
-        cd hypervisor\usermode
-        cl.exe /O2 /W4 /Fe:loader.exe main.c driver_interface.c payload_loader.c /link
+        where ml64.exe
+        if %ERRORLEVEL% neq 0 (
+          echo "ERROR: MASM (ml64.exe) not found!"
+          exit 1
+        )
+        echo "MASM found successfully"
 
-    - name: Build hypervisor core  
+    - name: Verify compiler
       shell: cmd
       run: |
-        call "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvars64.bat"
-        cd hypervisor\hypervisor
-        ml64.exe /c /Fo:asm\vmexit.obj asm\vmexit.asm
-        ml64.exe /c /Fo:asm\intrinsics.obj asm\intrinsics.asm  
-        ml64.exe /c /Fo:asm\segment.obj asm\segment.asm
-        cl.exe /c /O2 /W4 /I..\shared entry.c vmx.c vmcs.c ept.c exit_dispatch.c timing.c
-        cl.exe /c /O2 /W4 /I..\shared handlers\*.c
-        lib.exe /OUT:hypervisor.lib *.obj asm\*.obj
+        where cl.exe
+        cl.exe 2>&1 | findstr /C:"Version"
+        where lib.exe
+        echo "Toolchain verified"
 
-    - name: Upload artifacts
+    - name: Build usermode loader
+      shell: cmd
+      working-directory: hypervisor/usermode
+      run: |
+        echo Building usermode loader...
+        cl.exe /O2 /W4 /WX- /Fe:loader.exe ^
+          main.c driver_interface.c payload_loader.c loader_api.c ^
+          loader/hv_loader.c loader/pe_parser.c loader/pe_mapper.c ^
+          loader/pe_relocs.c loader/pe_iat.c loader/pe_imports.c ^
+          loader/pe_utils.c loader/pe_wipe.c loader/drv_loader.c ^
+          byovd/supdrv.c byovd/deployer.c byovd/crypto.c byovd/nt_helpers.c ^
+          /I../shared /I. ^
+          /link kernel32.lib advapi32.lib
+        if %ERRORLEVEL% neq 0 exit /b 1
+        echo Usermode loader built successfully
+        dir *.exe
+
+    - name: Build hypervisor assembly
+      shell: cmd
+      working-directory: hypervisor/hypervisor
+      run: |
+        echo Building assembly files...
+        if not exist asm\obj mkdir asm\obj
+        ml64.exe /nologo /c /Fo:asm\obj\vmexit.obj asm\vmexit.asm
+        if %ERRORLEVEL% neq 0 exit /b 1
+        ml64.exe /nologo /c /Fo:asm\obj\intrinsics.obj asm\intrinsics.asm
+        if %ERRORLEVEL% neq 0 exit /b 1
+        ml64.exe /nologo /c /Fo:asm\obj\segment.obj asm\segment.asm
+        if %ERRORLEVEL% neq 0 exit /b 1
+        echo Assembly built successfully
+        dir asm\obj\*.obj
+
+    - name: Build hypervisor C code
+      shell: cmd
+      working-directory: hypervisor/hypervisor
+      run: |
+        echo Building hypervisor C code...
+        if not exist obj mkdir obj
+        cl.exe /nologo /c /O2 /W4 /WX- /I..\shared /Foobj\ ^
+          entry.c vmx.c vmcs.c ept.c exit_dispatch.c timing.c ^
+          hooks.c debug.c nested.c spoof.c
+        if %ERRORLEVEL% neq 0 exit /b 1
+        echo Core modules built
+
+        cl.exe /nologo /c /O2 /W4 /WX- /I..\shared /Foobj\ ^
+          handlers\cpuid.c handlers\msr.c handlers\rdtsc.c ^
+          handlers\cr_access.c handlers\exception.c handlers\io.c ^
+          handlers\vmcall.c handlers\vmcall_phase2.c ^
+          handlers\ept_violation.c handlers\mtf.c ^
+          handlers\ept_misconfig.c handlers\power_mgmt.c
+        if %ERRORLEVEL% neq 0 exit /b 1
+        echo Handlers built
+
+        lib.exe /nologo /OUT:hypervisor.lib obj\*.obj asm\obj\*.obj
+        if %ERRORLEVEL% neq 0 exit /b 1
+        echo Library created successfully
+        dir *.lib
+
+    - name: Upload hypervisor artifacts
       uses: actions/upload-artifact@v4
       with:
-        name: ombra-${{ github.sha }}
+        name: hypervisor-core-${{ github.sha }}
         path: |
-          hypervisor/usermode/*.exe
-          hypervisor/hypervisor/*.lib
+          hypervisor/usermode/loader.exe
+          hypervisor/hypervisor/hypervisor.lib
+        retention-days: 30
+
+  build-gui:
+    name: Build GUI
+    runs-on: windows-latest
+    needs: build-hypervisor
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+      with:
+        submodules: recursive
+
+    - name: Setup MSBuild
+      uses: microsoft/setup-msbuild@v2
+
+    - name: Setup Visual Studio Developer Command Prompt
+      uses: ilammy/msvc-dev-cmd@v1
+      with:
+        arch: x64
+
+    - name: Configure CMake
+      shell: cmd
+      working-directory: hypervisor/usermode/gui
+      run: |
+        cmake -B build -G "Visual Studio 17 2022" -A x64 ^
+          -DCMAKE_BUILD_TYPE=${{ env.BUILD_TYPE }}
+
+    - name: Build GUI
+      shell: cmd
+      working-directory: hypervisor/usermode/gui
+      run: |
+        cmake --build build --config ${{ env.BUILD_TYPE }} --parallel
+        if %ERRORLEVEL% neq 0 exit /b 1
+        echo GUI built successfully
+        dir build\${{ env.BUILD_TYPE }}\*.exe
+
+    - name: Upload GUI artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: gui-${{ github.sha }}
+        path: |
+          hypervisor/usermode/gui/build/${{ env.BUILD_TYPE }}/*.exe
+        retention-days: 30
+
+  package:
+    name: Package Release
+    runs-on: windows-latest
+    needs: [build-hypervisor, build-gui]
+    if: github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/')
+
+    steps:
+    - name: Download hypervisor artifacts
+      uses: actions/download-artifact@v4
+      with:
+        name: hypervisor-core-${{ github.sha }}
+        path: release/
+
+    - name: Download GUI artifacts
+      uses: actions/download-artifact@v4
+      with:
+        name: gui-${{ github.sha }}
+        path: release/
+
+    - name: Create release package
+      shell: powershell
+      run: |
+        Compress-Archive -Path release/* -DestinationPath ombra-release-${{ github.sha }}.zip
+
+    - name: Upload release package
+      uses: actions/upload-artifact@v4
+      with:
+        name: ombra-release-${{ github.sha }}
+        path: ombra-release-${{ github.sha }}.zip
+        retention-days: 90

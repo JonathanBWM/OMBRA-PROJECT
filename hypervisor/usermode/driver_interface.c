@@ -380,6 +380,96 @@ DRV_STATUS DrvExecuteOnCpu(DRV_CONTEXT* ctx, uint32_t cpuId, void* func, uint64_
 }
 
 // =============================================================================
+// Module Loading (LDR_OPEN / LDR_LOAD)
+// =============================================================================
+
+DRV_STATUS DrvLdrOpen(DRV_CONTEXT* ctx, uint32_t imageSize, void** ppImageBase) {
+    if (!ctx->Initialized) return DRV_ERROR_SESSION_INIT;
+
+    SUPLDROPEN_IN in = {0};
+    SUPLDROPEN_OUT out = {0};
+
+    FillHeader(&in.Hdr, ctx, sizeof(in), sizeof(out));
+    in.cbImageWithEverything = imageSize;
+    in.cbImageBits = imageSize;
+    strncpy_s(in.szName, sizeof(in.szName), "OmbraHV", _TRUNCATE);
+    strncpy_s(in.szFilename, sizeof(in.szFilename), "C:\\Windows\\System32\\drivers\\ombrahv.sys", _TRUNCATE);
+
+    if (!DoIoctl(ctx->hDevice, SUP_IOCTL_LDR_OPEN, &in, sizeof(in), &out, sizeof(out), NULL)) {
+        return DRV_ERROR_IOCTL_FAILED;
+    }
+
+    if (out.Hdr.rc != VINF_SUCCESS || !out.pvImageBase) {
+        return DRV_ERROR_IOCTL_FAILED;
+    }
+
+    *ppImageBase = out.pvImageBase;
+    return DRV_SUCCESS;
+}
+
+DRV_STATUS DrvLdrLoad(DRV_CONTEXT* ctx, void* imageBase, const void* imageData,
+                      uint32_t imageSize, void* entryPoint) {
+    if (!ctx->Initialized) return DRV_ERROR_SESSION_INIT;
+
+    // Calculate total request size (header + fixed fields + image data)
+    size_t reqSize = sizeof(SUPLDRLOAD_IN) + imageSize;
+    SUPLDRLOAD_IN* in = (SUPLDRLOAD_IN*)HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, reqSize);
+    if (!in) return DRV_ERROR_ALLOC_FAILED;
+
+    SUPLDRLOAD_OUT out = {0};
+
+    FillHeader(&in->Hdr, ctx, (uint32_t)reqSize, sizeof(out));
+    in->pvImageBase = imageBase;
+    in->pfnModuleInit = entryPoint;
+    in->pfnModuleTerm = NULL;
+    in->cbImageBits = imageSize;
+    in->offStrTab = 0;
+    in->cbStrTab = 0;
+    in->offSymbols = 0;
+    in->cSymbols = 0;
+
+    // Copy image data after the fixed fields
+    memcpy((uint8_t*)in + sizeof(SUPLDRLOAD_IN), imageData, imageSize);
+
+    bool success = DoIoctl(ctx->hDevice, SUP_IOCTL_LDR_LOAD, in, (uint32_t)reqSize, &out, sizeof(out), NULL);
+
+    HeapFree(GetProcessHeap(), 0, in);
+
+    if (!success || out.Hdr.rc != VINF_SUCCESS) {
+        return DRV_ERROR_EXEC_FAILED;
+    }
+
+    return DRV_SUCCESS;
+}
+
+DRV_STATUS DrvLdrFree(DRV_CONTEXT* ctx, void* imageBase) {
+    if (!ctx->Initialized) return DRV_ERROR_SESSION_INIT;
+    if (!imageBase) return DRV_SUCCESS;  // Nothing to free
+
+    SUPLDRFREE_IN in = {0};
+    SUPLDRFREE_OUT out = {0};
+
+    FillHeader(&in.Hdr, ctx, sizeof(in), sizeof(out));
+    in.pvImageBase = imageBase;
+
+    DWORD bytesReturned;
+    BOOL success = DeviceIoControl(
+        ctx->hDevice,
+        SUP_IOCTL_LDR_FREE,
+        &in, sizeof(in),
+        &out, sizeof(out),
+        &bytesReturned,
+        NULL
+    );
+
+    if (!success || out.Hdr.rc != VINF_SUCCESS) {
+        return DRV_ERROR_IOCTL_FAILED;
+    }
+
+    return DRV_SUCCESS;
+}
+
+// =============================================================================
 // Symbol Resolution
 // =============================================================================
 

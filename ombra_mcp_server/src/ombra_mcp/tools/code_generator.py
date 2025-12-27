@@ -4,17 +4,270 @@ Code Generation Tools - Generate hypervisor code from templates
 
 import sqlite3
 from pathlib import Path
+import re
 
 DATA_DIR = Path(__file__).parent.parent / "data"
 DB_PATH = DATA_DIR / "intel_sdm.db"
+
+# Project root detection
+HYPERVISOR_ROOT = Path(__file__).parent.parent.parent.parent.parent / "hypervisor" / "hypervisor"
 
 
 def get_db():
     return sqlite3.connect(DB_PATH)
 
 
-def generate_vmcs_setup() -> str:
-    """Generate complete VMCS initialization code."""
+# =============================================================================
+# Project-Aware Implementation Scanner
+# =============================================================================
+
+def check_implementation_status(component_type: str, component_name: str = None) -> dict:
+    """
+    Scan the actual hypervisor codebase to check implementation status.
+
+    Args:
+        component_type: Type of component to check
+                       ("exit_handler", "vmcs_setup", "ept_setup", "msr_bitmap")
+        component_name: Specific component name (e.g., "CPUID" for exit handlers)
+
+    Returns:
+        dict with keys:
+            - exists: bool - whether component is implemented
+            - file_path: str - path to implementation file (if exists)
+            - function_name: str - name of the implementing function
+            - line_number: int - line where implementation starts
+            - is_stub: bool - whether it's just a stub/TODO
+            - snippet: str - code snippet showing implementation
+    """
+
+    result = {
+        "exists": False,
+        "file_path": None,
+        "function_name": None,
+        "line_number": None,
+        "is_stub": False,
+        "snippet": None
+    }
+
+    if component_type == "exit_handler":
+        return _check_exit_handler(component_name, result)
+    elif component_type == "vmcs_setup":
+        return _check_vmcs_setup(result)
+    elif component_type == "ept_setup":
+        return _check_ept_setup(result)
+    elif component_type == "msr_bitmap":
+        return _check_msr_bitmap(result)
+
+    return result
+
+
+def _check_exit_handler(reason_name: str, result: dict) -> dict:
+    """Check if an exit handler is implemented."""
+
+    # Map exit reason names to handler function names and files
+    handler_map = {
+        "CPUID": ("HandleCpuid", "cpuid.c"),
+        "RDTSC": ("HandleRdtsc", "rdtsc.c"),
+        "RDTSCP": ("HandleRdtscp", "rdtsc.c"),
+        "RDMSR": ("HandleRdmsr", "msr.c"),
+        "WRMSR": ("HandleWrmsr", "msr.c"),
+        "CR_ACCESS": ("HandleCrAccess", "cr_access.c"),
+        "EPT_VIOLATION": ("HandleEptViolation", "ept_violation.c"),
+        "EPT_MISCONFIG": ("HandleEptMisconfiguration", "ept_misconfig.c"),
+        "VMCALL": ("HandleVmcall", "vmcall.c"),
+        "EXCEPTION_NMI": ("HandleException", "exception.c"),
+        "IO_INSTRUCTION": ("HandleIo", "io.c"),
+        "MONITOR": ("HandleMonitor", "power_mgmt.c"),
+        "MWAIT": ("HandleMwait", "power_mgmt.c"),
+        "PAUSE": ("HandlePause", "power_mgmt.c"),
+    }
+
+    # Normalize reason name
+    reason_upper = reason_name.upper() if reason_name else ""
+
+    if reason_upper in handler_map:
+        func_name, file_name = handler_map[reason_upper]
+        file_path = HYPERVISOR_ROOT / "handlers" / file_name
+
+        if file_path.exists():
+            content = file_path.read_text()
+
+            # Find function definition
+            pattern = rf"VMEXIT_ACTION\s+{func_name}\s*\("
+            match = re.search(pattern, content)
+
+            if match:
+                result["exists"] = True
+                result["file_path"] = str(file_path)
+                result["function_name"] = func_name
+
+                # Find line number
+                lines = content[:match.start()].split('\n')
+                result["line_number"] = len(lines)
+
+                # Check if it's a stub (contains TODO or just returns FALSE)
+                func_start = match.start()
+                # Find closing brace (simplified - assumes proper formatting)
+                brace_count = 0
+                func_end = func_start
+                for i in range(func_start, len(content)):
+                    if content[i] == '{':
+                        brace_count += 1
+                    elif content[i] == '}':
+                        brace_count -= 1
+                        if brace_count == 0:
+                            func_end = i + 1
+                            break
+
+                func_body = content[func_start:func_end]
+                result["snippet"] = func_body[:500]  # First 500 chars
+
+                # Check if it's a stub
+                if "TODO" in func_body or "not implemented" in func_body.lower():
+                    result["is_stub"] = True
+
+                # Also check in exit_dispatch.c to verify it's wired up
+                dispatch_file = HYPERVISOR_ROOT / "exit_dispatch.c"
+                if dispatch_file.exists():
+                    dispatch_content = dispatch_file.read_text()
+                    if func_name not in dispatch_content:
+                        result["is_stub"] = True  # Exists but not wired up
+
+    return result
+
+
+def _check_vmcs_setup(result: dict) -> dict:
+    """Check VMCS setup implementation."""
+
+    vmcs_file = HYPERVISOR_ROOT / "vmcs.c"
+    if vmcs_file.exists():
+        content = vmcs_file.read_text()
+
+        # Look for main setup functions
+        if "VmcsSetupControls" in content:
+            result["exists"] = True
+            result["file_path"] = str(vmcs_file)
+            result["function_name"] = "VmcsSetupControls"
+
+            # Find line number
+            match = re.search(r"void\s+VmcsSetupControls", content)
+            if match:
+                lines = content[:match.start()].split('\n')
+                result["line_number"] = len(lines)
+
+            # Extract snippet
+            result["snippet"] = content[match.start():match.start()+500] if match else None
+
+    return result
+
+
+def _check_ept_setup(result: dict) -> dict:
+    """Check EPT setup implementation."""
+
+    ept_file = HYPERVISOR_ROOT / "ept.c"
+    if ept_file.exists():
+        content = ept_file.read_text()
+
+        # Look for EPT initialization
+        if "EptInitialize" in content or "SetupEptIdentityMap" in content:
+            result["exists"] = True
+            result["file_path"] = str(ept_file)
+            result["function_name"] = "EptInitialize"
+
+            # Find line number
+            match = re.search(r"OMBRA_STATUS\s+EptInitialize", content)
+            if match:
+                lines = content[:match.start()].split('\n')
+                result["line_number"] = len(lines)
+                result["snippet"] = content[match.start():match.start()+500]
+
+    return result
+
+
+def _check_msr_bitmap(result: dict) -> dict:
+    """Check MSR bitmap setup implementation."""
+
+    vmcs_file = HYPERVISOR_ROOT / "vmcs.c"
+    if vmcs_file.exists():
+        content = vmcs_file.read_text()
+
+        # MSR bitmap is configured in VmcsSetupControls
+        if "MsrBitmap" in content and "MSR_IA32_VMX" in content:
+            result["exists"] = True
+            result["file_path"] = str(vmcs_file)
+            result["function_name"] = "VmcsSetupControls (MSR bitmap section)"
+
+            # Find the MSR bitmap section
+            match = re.search(r"// MSR Bitmap", content)
+            if match:
+                lines = content[:match.start()].split('\n')
+                result["line_number"] = len(lines)
+                result["snippet"] = content[match.start():match.start()+800]
+
+    return result
+
+
+def _format_existing_implementation(component_type: str, component_name: str,
+                                    status: dict, note: str = "") -> str:
+    """Format a message about an existing implementation."""
+
+    lines = []
+    lines.append("=" * 80)
+    lines.append(f"EXISTING IMPLEMENTATION DETECTED: {component_type} - {component_name}")
+    lines.append("=" * 80)
+    lines.append("")
+    lines.append(f"File:     {status['file_path']}")
+    lines.append(f"Function: {status['function_name']}")
+    lines.append(f"Line:     {status['line_number']}")
+
+    if status.get('is_stub'):
+        lines.append("")
+        lines.append("WARNING: This appears to be a stub or incomplete implementation.")
+        lines.append("         Contains TODO markers or is not wired up in exit dispatcher.")
+
+    lines.append("")
+    lines.append("CURRENT IMPLEMENTATION:")
+    lines.append("-" * 80)
+
+    if status.get('snippet'):
+        lines.append(status['snippet'])
+    else:
+        lines.append("(No snippet available)")
+
+    lines.append("-" * 80)
+
+    if note:
+        lines.append("")
+        lines.append(f"NOTE: {note}")
+
+    lines.append("")
+    lines.append("=" * 80)
+
+    return "\n".join(lines)
+
+
+async def generate_vmcs_setup(force: bool = False) -> str:
+    """
+    Generate complete VMCS initialization code.
+
+    Args:
+        force: Generate code even if VMCS setup already exists
+
+    Returns:
+        Generated code or existing implementation info
+    """
+
+    # Check if VMCS setup already exists
+    if not force:
+        status = check_implementation_status("vmcs_setup")
+        if status["exists"]:
+            return _format_existing_implementation(
+                "VMCS Setup",
+                "VmcsSetupControls",
+                status,
+                "Use force=True to generate anyway"
+            )
+
     conn = get_db()
 
     code = []
@@ -47,8 +300,18 @@ def generate_vmcs_setup() -> str:
     return "\n".join(code)
 
 
-def generate_exit_handler(reason: int, stealth: bool = True) -> str:
-    """Generate exit handler for specific reason."""
+async def generate_exit_handler(reason: int, stealth: bool = True, force: bool = False) -> str:
+    """
+    Generate exit handler for specific reason.
+
+    Args:
+        reason: Exit reason number (0-65)
+        stealth: Include stealth/timing compensation code
+        force: Generate code even if handler already exists
+
+    Returns:
+        Generated code or existing implementation info
+    """
     conn = get_db()
 
     cursor = conn.execute(
@@ -59,9 +322,23 @@ def generate_exit_handler(reason: int, stealth: bool = True) -> str:
 
     if not row:
         conn.close()
-        return f"// Exit reason {reason} not found"
+        return f"// Exit reason {reason} not found in database"
 
     name, desc, notes, has_qual = row
+
+    # Check if handler already exists
+    if not force:
+        status = check_implementation_status("exit_handler", name)
+        if status["exists"]:
+            conn.close()
+            return _format_existing_implementation(
+                "Exit Handler",
+                name,
+                status,
+                f"Use force=True to generate anyway"
+            )
+
+    # If we get here, either force=True or handler doesn't exist - generate it
 
     code = []
     code.append(f"// Exit Handler: {name} (Reason {reason})")
@@ -200,8 +477,29 @@ def generate_exit_handler(reason: int, stealth: bool = True) -> str:
     return "\n".join(code)
 
 
-def generate_ept_setup(memory_gb: int = 512) -> str:
-    """Generate EPT identity mapping setup code."""
+async def generate_ept_setup(memory_gb: int = 512, force: bool = False) -> str:
+    """
+    Generate EPT identity mapping setup code.
+
+    Args:
+        memory_gb: Size of identity map in GB (default 512)
+        force: Generate code even if EPT setup already exists
+
+    Returns:
+        Generated code or existing implementation info
+    """
+
+    # Check if EPT setup already exists
+    if not force:
+        status = check_implementation_status("ept_setup")
+        if status["exists"]:
+            return _format_existing_implementation(
+                "EPT Setup",
+                "EptInitialize",
+                status,
+                "Use force=True to generate anyway"
+            )
+
     code = []
     code.append(f"// EPT Identity Mapping for {memory_gb}GB physical memory")
     code.append("// Uses 1GB pages for efficiency")
@@ -248,8 +546,29 @@ def generate_ept_setup(memory_gb: int = 512) -> str:
     return "\n".join(code)
 
 
-def generate_msr_bitmap_setup(intercept_msrs: list = None) -> str:
-    """Generate MSR bitmap configuration code."""
+def generate_msr_bitmap_setup(intercept_msrs: list = None, force: bool = False) -> str:
+    """
+    Generate MSR bitmap configuration code.
+
+    Args:
+        intercept_msrs: List of MSR addresses to intercept (default: VMX MSRs)
+        force: Generate code even if MSR bitmap setup already exists
+
+    Returns:
+        Generated code or existing implementation info
+    """
+
+    # Check if MSR bitmap already exists
+    if not force:
+        status = check_implementation_status("msr_bitmap")
+        if status["exists"]:
+            return _format_existing_implementation(
+                "MSR Bitmap Setup",
+                "MSR Bitmap Configuration",
+                status,
+                "Use force=True to generate anyway"
+            )
+
     if intercept_msrs is None:
         intercept_msrs = [0x480, 0x481, 0x482, 0x483, 0x484, 0x485]  # VMX MSRs
 
@@ -289,3 +608,115 @@ def generate_msr_bitmap_setup(intercept_msrs: list = None) -> str:
     code.append("}")
 
     return "\n".join(code)
+
+
+# =============================================================================
+# Project Status Summary
+# =============================================================================
+
+def get_project_implementation_status() -> dict:
+    """
+    Get comprehensive status of all hypervisor components.
+
+    Returns:
+        dict with keys:
+            - exit_handlers: dict of handler_name -> status
+            - vmcs_setup: status dict
+            - ept_setup: status dict
+            - msr_bitmap: status dict
+            - summary: text summary
+    """
+
+    # All possible exit handlers we might implement
+    common_handlers = [
+        "CPUID", "RDTSC", "RDTSCP", "RDMSR", "WRMSR",
+        "CR_ACCESS", "EPT_VIOLATION", "EPT_MISCONFIG",
+        "VMCALL", "EXCEPTION_NMI", "IO_INSTRUCTION",
+        "MONITOR", "MWAIT", "PAUSE", "HLT",
+        "INVLPG", "XSETBV", "INVEPT", "INVVPID",
+        "VMXON", "VMXOFF", "VMLAUNCH", "VMRESUME",
+    ]
+
+    result = {
+        "exit_handlers": {},
+        "vmcs_setup": None,
+        "ept_setup": None,
+        "msr_bitmap": None,
+        "summary": []
+    }
+
+    # Check all exit handlers
+    implemented = []
+    stubs = []
+    missing = []
+
+    for handler in common_handlers:
+        status = check_implementation_status("exit_handler", handler)
+        result["exit_handlers"][handler] = status
+
+        if status["exists"]:
+            if status.get("is_stub"):
+                stubs.append(handler)
+            else:
+                implemented.append(handler)
+        else:
+            missing.append(handler)
+
+    # Check infrastructure components
+    result["vmcs_setup"] = check_implementation_status("vmcs_setup")
+    result["ept_setup"] = check_implementation_status("ept_setup")
+    result["msr_bitmap"] = check_implementation_status("msr_bitmap")
+
+    # Build summary
+    summary = []
+    summary.append("=" * 80)
+    summary.append("HYPERVISOR IMPLEMENTATION STATUS")
+    summary.append("=" * 80)
+    summary.append("")
+
+    # Exit handlers summary
+    summary.append(f"Exit Handlers: {len(implemented)} implemented, {len(stubs)} stubs, {len(missing)} missing")
+    summary.append("")
+
+    if implemented:
+        summary.append("IMPLEMENTED:")
+        for name in implemented:
+            status = result["exit_handlers"][name]
+            file_name = Path(status["file_path"]).name if status["file_path"] else "?"
+            summary.append(f"  ✓ {name:20s} ({file_name}:{status.get('line_number', '?')})")
+        summary.append("")
+
+    if stubs:
+        summary.append("STUBS (need completion):")
+        for name in stubs:
+            status = result["exit_handlers"][name]
+            file_name = Path(status["file_path"]).name if status["file_path"] else "?"
+            summary.append(f"  ⚠ {name:20s} ({file_name}:{status.get('line_number', '?')})")
+        summary.append("")
+
+    if missing:
+        summary.append("NOT IMPLEMENTED:")
+        for name in missing:
+            summary.append(f"  ✗ {name}")
+        summary.append("")
+
+    # Infrastructure components
+    summary.append("Infrastructure Components:")
+    components = [
+        ("VMCS Setup", result["vmcs_setup"]),
+        ("EPT Setup", result["ept_setup"]),
+        ("MSR Bitmap", result["msr_bitmap"]),
+    ]
+
+    for comp_name, status in components:
+        if status and status["exists"]:
+            file_name = Path(status["file_path"]).name if status["file_path"] else "?"
+            summary.append(f"  ✓ {comp_name:20s} ({file_name}:{status.get('line_number', '?')})")
+        else:
+            summary.append(f"  ✗ {comp_name}")
+
+    summary.append("")
+    summary.append("=" * 80)
+
+    result["summary"] = "\n".join(summary)
+    return result

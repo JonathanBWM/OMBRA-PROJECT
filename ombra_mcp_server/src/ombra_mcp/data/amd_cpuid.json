@@ -1,0 +1,442 @@
+{
+  "cpuid_leaves": {
+    "0x80000001": {
+      "name": "AMD Extended Features",
+      "ecx_bits": {
+        "0": {
+          "name": "LAHF_LM",
+          "description": "LAHF and SAHF in long mode"
+        },
+        "1": {
+          "name": "CmpLegacy",
+          "description": "Core multi-processing legacy mode"
+        },
+        "2": {
+          "name": "SVM",
+          "description": "Secure Virtual Machine (AMD-V) support",
+          "evasion_note": "CRITICAL: Anti-cheat checks this bit to detect AMD virtualization. Must be cleared when spoofing bare metal."
+        },
+        "3": {
+          "name": "ExtApicSpace",
+          "description": "Extended APIC space"
+        },
+        "4": {
+          "name": "AltMovCr8",
+          "description": "LOCK MOV CR0 means MOV CR8"
+        },
+        "5": {
+          "name": "ABM",
+          "description": "Advanced bit manipulation (LZCNT)"
+        },
+        "6": {
+          "name": "SSE4A",
+          "description": "SSE4A instructions (EXTRQ, INSERTQ, MOVNTSS, MOVNTSD)"
+        },
+        "7": {
+          "name": "MisalignedSSE",
+          "description": "Misaligned SSE mode"
+        },
+        "8": {
+          "name": "3DNowPrefetch",
+          "description": "PREFETCH and PREFETCHW instructions"
+        },
+        "9": {
+          "name": "OSVW",
+          "description": "OS visible workaround"
+        },
+        "10": {
+          "name": "IBS",
+          "description": "Instruction based sampling"
+        },
+        "11": {
+          "name": "XOP",
+          "description": "Extended operation support"
+        },
+        "12": {
+          "name": "SKINIT",
+          "description": "SKINIT and STGI instructions"
+        },
+        "13": {
+          "name": "WDT",
+          "description": "Watchdog timer support"
+        },
+        "15": {
+          "name": "LWP",
+          "description": "Lightweight profiling support"
+        },
+        "16": {
+          "name": "FMA4",
+          "description": "Four-operand FMA instructions"
+        },
+        "17": {
+          "name": "TCE",
+          "description": "Translation cache extension"
+        },
+        "21": {
+          "name": "TBM",
+          "description": "Trailing bit manipulation"
+        },
+        "22": {
+          "name": "TopologyExtensions",
+          "description": "Topology extensions support"
+        },
+        "23": {
+          "name": "PerfCtrExtCore",
+          "description": "Core performance counter extensions"
+        },
+        "24": {
+          "name": "PerfCtrExtNB",
+          "description": "NB performance counter extensions"
+        },
+        "26": {
+          "name": "DataBreakpointExtension",
+          "description": "Data access breakpoint extension"
+        },
+        "27": {
+          "name": "PerfTsc",
+          "description": "Performance timestamp counter"
+        },
+        "28": {
+          "name": "PerfCtrExtL2I",
+          "description": "L2I performance counter extensions"
+        },
+        "29": {
+          "name": "MwaitExtended",
+          "description": "MWAIT extensions"
+        }
+      },
+      "edx_bits": {
+        "11": {
+          "name": "SYSCALL",
+          "description": "SYSCALL and SYSRET instructions"
+        },
+        "20": {
+          "name": "NX",
+          "description": "No-Execute page protection (execute disable bit)"
+        },
+        "22": {
+          "name": "MmxExt",
+          "description": "AMD extensions to MMX"
+        },
+        "23": {
+          "name": "MMX",
+          "description": "MMX technology"
+        },
+        "24": {
+          "name": "FXSR",
+          "description": "FXSAVE and FXRSTOR instructions"
+        },
+        "25": {
+          "name": "FFXSR",
+          "description": "FXSAVE and FXRSTOR optimizations"
+        },
+        "26": {
+          "name": "Page1GB",
+          "description": "1GB large page support"
+        },
+        "27": {
+          "name": "RDTSCP",
+          "description": "RDTSCP instruction and IA32_TSC_AUX MSR",
+          "evasion_note": "Must virtualize IA32_TSC_AUX (0xC0000103) if RDTSCP is used for detection"
+        },
+        "29": {
+          "name": "LM",
+          "description": "Long Mode (64-bit)"
+        },
+        "30": {
+          "name": "3DNowExt",
+          "description": "AMD extensions to 3DNow!"
+        },
+        "31": {
+          "name": "3DNow",
+          "description": "3DNow! instructions"
+        }
+      }
+    },
+    "0x8000000A": {
+      "name": "SVM Features",
+      "eax": "SVM revision number",
+      "ebx": "Number of Address Space Identifiers (ASIDs)",
+      "edx_bits": {
+        "0": {
+          "name": "NP",
+          "description": "Nested Paging (NPT/RVI) support",
+          "evasion_note": "NPT is AMD's equivalent to Intel EPT. Hide if present."
+        },
+        "1": {
+          "name": "LbrVirt",
+          "description": "LBR (Last Branch Record) virtualization"
+        },
+        "2": {
+          "name": "SVML",
+          "description": "SVM Lock"
+        },
+        "3": {
+          "name": "NRIPS",
+          "description": "Next RIP save on VMEXIT",
+          "evasion_note": "Hardware saves next RIP automatically"
+        },
+        "4": {
+          "name": "TscRateMsr",
+          "description": "TSC ratio MSR (0xC0000104)",
+          "evasion_note": "AMD's hardware TSC scaling. Can be used for TSC compensation."
+        },
+        "5": {
+          "name": "VmcbClean",
+          "description": "VMCB clean bits support"
+        },
+        "6": {
+          "name": "FlushByAsid",
+          "description": "Flush by ASID (TLB flush optimization)"
+        },
+        "7": {
+          "name": "DecodeAssists",
+          "description": "Decode assists (hardware instruction decode)"
+        },
+        "10": {
+          "name": "PauseFilter",
+          "description": "PAUSE intercept filter"
+        },
+        "12": {
+          "name": "PauseFilterThreshold",
+          "description": "PAUSE filter threshold"
+        },
+        "13": {
+          "name": "AVIC",
+          "description": "AMD Virtual Interrupt Controller"
+        },
+        "15": {
+          "name": "V_VMSAVE_VMLOAD",
+          "description": "Virtualized VMSAVE/VMLOAD"
+        },
+        "16": {
+          "name": "vGIF",
+          "description": "Virtualized Global Interrupt Flag"
+        },
+        "17": {
+          "name": "GMET",
+          "description": "Guest Mode Execute Trap"
+        },
+        "18": {
+          "name": "X2AVIC",
+          "description": "Virtual x2APIC"
+        },
+        "19": {
+          "name": "SSSCheck",
+          "description": "Supervisor Shadow Stack"
+        },
+        "20": {
+          "name": "SpecCtrl",
+          "description": "SPEC_CTRL virtualization"
+        },
+        "21": {
+          "name": "ROGPT",
+          "description": "Read-Only Guest Page Table"
+        },
+        "23": {
+          "name": "HOST_MCE_OVERRIDE",
+          "description": "Host MCE override"
+        },
+        "24": {
+          "name": "TlbiCtl",
+          "description": "INVLPGB/TLBSYNC support"
+        },
+        "25": {
+          "name": "VNMI",
+          "description": "Virtual NMI"
+        }
+      }
+    },
+    "0x80000008": {
+      "name": "Address Sizes",
+      "eax_format": {
+        "7:0": "Physical address bits",
+        "15:8": "Linear address bits"
+      },
+      "ebx_bits": {
+        "0": {
+          "name": "CLZERO",
+          "description": "CLZERO instruction"
+        },
+        "1": {
+          "name": "InstRetCntMsr",
+          "description": "Instruction retired count MSR"
+        },
+        "2": {
+          "name": "RstrFpErrPtrs",
+          "description": "FP error pointers restored by XRSTOR"
+        },
+        "4": {
+          "name": "RDPRU",
+          "description": "RDPRU instruction"
+        },
+        "8": {
+          "name": "MCOMMIT",
+          "description": "MCOMMIT instruction"
+        },
+        "9": {
+          "name": "WBNOINVD",
+          "description": "WBNOINVD instruction"
+        },
+        "12": {
+          "name": "IBPB",
+          "description": "Indirect Branch Prediction Barrier"
+        },
+        "13": {
+          "name": "WBINVD",
+          "description": "WBINVD always interruptible"
+        },
+        "14": {
+          "name": "IBRS",
+          "description": "Indirect Branch Restricted Speculation"
+        },
+        "15": {
+          "name": "STIBP",
+          "description": "Single Thread Indirect Branch Predictor"
+        },
+        "16": {
+          "name": "IbrsAlwaysOn",
+          "description": "IBRS always on preferred"
+        },
+        "17": {
+          "name": "StibpAlwaysOn",
+          "description": "STIBP always on preferred"
+        },
+        "18": {
+          "name": "IbrsPreferred",
+          "description": "IBRS preferred over software solution"
+        },
+        "19": {
+          "name": "IbrsSameMode",
+          "description": "IBRS provides same mode protection"
+        },
+        "20": {
+          "name": "EferLmsleUnsupported",
+          "description": "EFER.LMSLE unsupported"
+        },
+        "21": {
+          "name": "INVLPGBnestedPages",
+          "description": "INVLPGB supports nested pages"
+        },
+        "24": {
+          "name": "SSBD",
+          "description": "Speculative Store Bypass Disable"
+        },
+        "25": {
+          "name": "SsbdVirtSpecCtrl",
+          "description": "SSBD uses VIRT_SPEC_CTRL"
+        },
+        "26": {
+          "name": "SsbdNotRequired",
+          "description": "SSBD not needed"
+        }
+      },
+      "ecx_bits": {
+        "0:7": "Number of physical CPU cores - 1",
+        "12:15": "APIC ID size"
+      }
+    }
+  },
+  "svm_msrs": {
+    "VM_CR": {
+      "address": "0xC0010114",
+      "description": "SVM VM Control Register - Controls SVM behavior",
+      "bits": {
+        "0": "DPD - Debug port disable",
+        "1": "R_INIT - INIT redirect disable",
+        "2": "DIS_A20M - A20M masking disable",
+        "3": "LOCK - SVM Lock (once set, cannot clear until reset)",
+        "4": "SVMDIS - SVM Disable"
+      },
+      "evasion_note": "Reading this MSR can reveal SVM state. Virtualize to return 0 or inject #GP."
+    },
+    "VM_HSAVE_PA": {
+      "address": "0xC0010117",
+      "description": "Host save area physical address for VMRUN",
+      "evasion_note": "Non-zero value indicates SVM is in use. Virtualize to return 0."
+    },
+    "TSC_RATIO": {
+      "address": "0xC0010104",
+      "description": "TSC ratio for frequency scaling (numerator/denominator)",
+      "evasion_note": "Can be used for TSC compensation on AMD. If TscRateMsr feature is supported, use this for timing normalization."
+    },
+    "EFER": {
+      "address": "0xC0000080",
+      "description": "Extended Feature Enable Register",
+      "bits": {
+        "0": "SYSCALL Enable",
+        "8": "LME - Long Mode Enable",
+        "10": "LMA - Long Mode Active",
+        "11": "NXE - No-Execute Enable",
+        "12": "SVME - SVM Enable",
+        "13": "LMSLE - Long Mode Segment Limit Enable",
+        "14": "FFXSR - Fast FXSAVE/FXRSTOR",
+        "15": "TCE - Translation Cache Extension Enable"
+      },
+      "evasion_note": "CRITICAL: EFER.SVME (bit 12) indicates SVM is enabled. Must be cleared in virtualized reads."
+    },
+    "IA32_TSC_AUX": {
+      "address": "0xC0000103",
+      "description": "TSC auxiliary signature (used by RDTSCP)",
+      "evasion_note": "Used by RDTSCP. Must virtualize to return consistent values across VM-exits."
+    }
+  },
+  "evasion_checklist": [
+    "Clear CPUID.80000001h:ECX[2] (SVM bit) when guest queries",
+    "Clear EFER.SVME (bit 12, MSR 0xC0000080) in virtualized reads",
+    "Return 0 for CPUID leaf 0x8000000Ah (SVM features) or don't modify EAX/EBX",
+    "Virtualize VM_CR (0xC0010114) to return 0 or inject #GP(0)",
+    "Virtualize VM_HSAVE_PA (0xC0010117) to return 0",
+    "If using TSC_RATIO MSR, ensure compensation is precise",
+    "Virtualize IA32_TSC_AUX (0xC0000103) for RDTSCP consistency",
+    "Handle VMMCALL instruction (AMD's VMCALL equivalent) - may trigger detection",
+    "Consider nested paging (NPT) violations have similar timing signatures to EPT",
+    "AMD's hardware TSC scaling via TSC_RATIO can be used for better timing compensation than Intel's TSC offset"
+  ],
+  "intel_vs_amd": {
+    "instruction_differences": {
+      "vmcall": {
+        "intel": "VMCALL",
+        "amd": "VMMCALL",
+        "note": "Different opcodes. Anti-cheat may test both to detect which hypervisor architecture is present."
+      },
+      "vmentry": {
+        "intel": "VMLAUNCH/VMRESUME",
+        "amd": "VMRUN",
+        "note": "AMD uses single VMRUN instruction for both initial and subsequent VM entries"
+      },
+      "vmexit": {
+        "intel": "Automatic on exit conditions",
+        "amd": "Automatic on exit conditions",
+        "note": "Exit reasons and qualification formats differ between vendors"
+      }
+    },
+    "structure_differences": {
+      "vmcs_vs_vmcb": {
+        "intel": "VMCS (Virtual Machine Control Structure) - opaque, accessed via VMREAD/VMWRITE",
+        "amd": "VMCB (Virtual Machine Control Block) - documented structure, direct memory access",
+        "note": "VMCB is simpler but more easily signature-scanned in memory"
+      },
+      "ept_vs_npt": {
+        "intel": "EPT (Extended Page Tables)",
+        "amd": "NPT/RVI (Nested Page Tables / Rapid Virtualization Indexing)",
+        "note": "Conceptually identical, different control register formats"
+      }
+    }
+  },
+  "detection_specific": {
+    "timing_considerations": {
+      "svm_exits": "AMD SVM exits are generally slightly faster than Intel VMX exits due to simpler VMCB structure vs VMCS",
+      "npt_violations": "NPT violations have similar timing characteristics to EPT violations. Apply same timing compensation.",
+      "tsc_ratio_advantage": "AMD's hardware TSC_RATIO MSR provides more precise timing compensation than Intel's TSC_OFFSET"
+    },
+    "common_checks": [
+      "CPUID.80000001h:ECX[2] (SVM) - Most common check",
+      "CPUID.8000000Ah present - If this leaf exists with valid data, SVM hardware is present",
+      "RDMSR on 0xC0010114 (VM_CR) - Checking SVME state",
+      "RDMSR on 0xC0000080 (EFER) checking SVME bit",
+      "Attempting VMMCALL - Will cause #UD if not in guest mode, #VMEXIT if in guest",
+      "Memory scanning for 'VMCB' strings or known SVM driver signatures"
+    ]
+  }
+}

@@ -26,9 +26,14 @@ class ProjectBrainDB:
     @contextmanager
     def _connection(self):
         """Context manager for database connections."""
-        conn = sqlite3.connect(self.db_path)
+        # timeout=30 prevents indefinite waits on locked database
+        # check_same_thread=False allows reuse across threads (with our context manager pattern)
+        conn = sqlite3.connect(self.db_path, timeout=30.0, check_same_thread=False)
         conn.row_factory = sqlite3.Row
         try:
+            # Enable WAL mode for better concurrent access
+            conn.execute("PRAGMA journal_mode=WAL")
+            conn.execute("PRAGMA busy_timeout=30000")  # 30 second busy timeout
             yield conn
             conn.commit()
         finally:
@@ -138,6 +143,60 @@ class ProjectBrainDB:
                     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 );
 
+                -- Concept Intelligence System
+                CREATE TABLE IF NOT EXISTS concepts (
+                    id TEXT PRIMARY KEY,
+                    category TEXT,
+                    name TEXT,
+                    description TEXT,
+                    source_doc TEXT,
+                    sdm_refs TEXT,
+
+                    required_patterns TEXT,
+                    optional_patterns TEXT,
+                    anti_patterns TEXT,
+
+                    vmcs_fields TEXT,
+                    exit_reasons TEXT,
+                    msrs TEXT,
+
+                    implementation_status TEXT,
+                    confidence REAL,
+                    verified_by_annotation BOOLEAN DEFAULT FALSE,
+                    implementation_files TEXT,
+
+                    priority TEXT,
+                    anti_cheat_relevance TEXT,
+
+                    depends_on TEXT,
+                    phase_order INTEGER
+                );
+
+                CREATE TABLE IF NOT EXISTS concept_findings (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    concept_id TEXT,
+                    file_path TEXT,
+                    line_number INTEGER,
+                    finding_type TEXT,
+                    message TEXT,
+                    severity TEXT,
+                    detected_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    dismissed BOOLEAN DEFAULT FALSE,
+                    dismissed_reason TEXT,
+                    FOREIGN KEY (concept_id) REFERENCES concepts(id)
+                );
+
+                CREATE TABLE IF NOT EXISTS concept_annotations (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    concept_id TEXT,
+                    file_path TEXT,
+                    line_number INTEGER,
+                    annotation_type TEXT,
+                    notes TEXT,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    FOREIGN KEY (concept_id) REFERENCES concepts(id)
+                );
+
                 -- Indexes
                 CREATE INDEX IF NOT EXISTS idx_findings_severity
                     ON findings(severity) WHERE NOT dismissed;
@@ -147,6 +206,12 @@ class ProjectBrainDB:
                     ON suggestions(priority) WHERE NOT acted_on;
                 CREATE INDEX IF NOT EXISTS idx_exit_handlers_status
                     ON exit_handlers(status);
+                CREATE INDEX IF NOT EXISTS idx_concepts_category
+                    ON concepts(category);
+                CREATE INDEX IF NOT EXISTS idx_concepts_status
+                    ON concepts(implementation_status);
+                CREATE INDEX IF NOT EXISTS idx_concept_findings_concept
+                    ON concept_findings(concept_id) WHERE NOT dismissed;
             """)
 
     # =========================================================================
