@@ -13,6 +13,7 @@
 
 #include <Windows.h>
 #include <ShellAPI.h>
+#include <shlobj.h>
 
 //=============================================================================
 // Constants

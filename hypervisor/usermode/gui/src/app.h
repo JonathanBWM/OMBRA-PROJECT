@@ -1,6 +1,7 @@
 #pragma once
 
 #include "auth.h"
+#include "../loader_api.h"
 #include <Windows.h>
 #include <d3d11.h>
 #include <string>
@@ -11,8 +12,6 @@
 #include <chrono>
 
 // Forward declarations
-struct LoaderContext;
-struct LoaderStatus;
 struct ImFont;
 
 namespace Ombra {
