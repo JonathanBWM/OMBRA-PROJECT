@@ -48,6 +48,9 @@ set(LOADER_SOURCES
     ../byovd/nt_helpers.c
 )
 
+# Force C files to compile as C (not C++)
+set_source_files_properties(${LOADER_SOURCES} PROPERTIES LANGUAGE C)
+
 # Create executable
 add_executable(OmbraGUI WIN32
     ${IMGUI_SOURCES}

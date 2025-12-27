@@ -8,6 +8,7 @@
 #include "loader_api.h"
 #include "payload_loader.h"
 #include "byovd/supdrv.h"
+#include "byovd/nt_defs.h"
 #include "obfuscate.h"
 
 #include <Windows.h>

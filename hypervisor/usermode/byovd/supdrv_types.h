@@ -18,12 +18,16 @@
 #define BYOVD_SUPDRV_TYPES_H
 
 #include "types.h"
+#include <stddef.h>  // For offsetof macro
 
 // MSVC compatibility for static assertions
-#ifdef _MSC_VER
+#if defined(__cplusplus)
     #define STATIC_ASSERT(expr, msg) static_assert(expr, msg)
+#elif defined(_MSC_VER)
+    // MSVC C mode uses _Static_assert in C11
+    #define STATIC_ASSERT(expr, msg) _Static_assert(expr, msg)
 #else
-    #define STATIC_ASSERT(expr, msg) STATIC_ASSERT(expr, msg)
+    #define STATIC_ASSERT(expr, msg) _Static_assert(expr, msg)
 #endif
 
 //=============================================================================
