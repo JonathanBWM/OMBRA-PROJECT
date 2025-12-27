@@ -94,6 +94,7 @@
 
 #include "timing.h"
 #include "vmx.h"
+#include "ept.h"
 #include "../shared/vmcs_fields.h"
 #include <intrin.h>
 

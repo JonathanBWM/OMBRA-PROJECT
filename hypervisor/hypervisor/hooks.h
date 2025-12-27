@@ -27,6 +27,7 @@
 #define OMBRA_HOOKS_H
 
 #include "../shared/types.h"
+#include "../shared/ept_defs.h"
 #include <intrin.h>
 
 // =============================================================================
