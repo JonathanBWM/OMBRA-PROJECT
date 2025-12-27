@@ -33,8 +33,12 @@ typedef struct _EPT_STATE {
     // Pre-computed EPTP value
     U64         Eptp;
 
-    // For 2MB pages, we'd also need PD tables
-    // For 4KB pages, we'd also need PT tables
+    // Split page tables
+    // When a 1GB page is split, we allocate a PD table (512 x 2MB entries)
+    // When a 2MB page is split, we allocate a PT table (512 x 4KB entries)
+    // These arrays track which PDPT entries have been split
+    void*       SplitPdTables[EPT_ENTRIES_PER_TABLE];   // Virtual addresses of PD tables
+    void*       SplitPtTables[EPT_ENTRIES_PER_TABLE];   // Virtual addresses of PT tables (future)
 
     // Tracking for hook support
     U32         HookCount;
@@ -43,6 +47,12 @@ typedef struct _EPT_STATE {
     // Page splitting counters (for hook framework)
     U32         SplitPdCount;   // Number of 1GB pages split to 2MB (PDs allocated)
     U32         SplitPtCount;   // Number of 2MB pages split to 4KB (PTs allocated)
+
+    // Memory allocation tracking (for safe page splitting)
+    void*       EptMemoryBase;          // Base virtual address of EPT memory pool
+    U64         EptMemoryPhysical;      // Base physical address of EPT memory pool
+    U32         TotalPagesAllocated;    // Total 4KB pages allocated for EPT region
+    U32         PagesUsed;              // Pages currently in use (PML4 + PDPT + splits)
 } EPT_STATE;
 
 // =============================================================================
@@ -53,12 +63,15 @@ typedef struct _EPT_STATE {
 // The caller must provide pre-allocated page-aligned memory:
 //   - pml4Virtual/pml4Physical: 4KB for PML4
 //   - pdptVirtual/pdptPhysical: 4KB for PDPT (512 entries)
+//   - totalPagesAllocated: Total 4KB pages in the EPT memory region
+//     (must be >= 2 for PML4+PDPT, recommended 512 for splits)
 OMBRA_STATUS EptInitialize(
     EPT_STATE* ept,
     void* pml4Virtual,
     U64 pml4Physical,
     void* pdptVirtual,
-    U64 pdptPhysical
+    U64 pdptPhysical,
+    U32 totalPagesAllocated
 );
 
 // Destroy EPT (does not free memory - caller's responsibility)
@@ -84,6 +97,15 @@ OMBRA_STATUS EptModifyPage(
 // Split a large page into smaller pages (for fine-grained hooks)
 // Not implemented in Phase 4 - needed for Phase 6 (Hook framework)
 OMBRA_STATUS EptSplitLargePage(EPT_STATE* ept, U64 guestPhysical);
+
+// Split a 1GB page into 512 x 2MB pages
+// This allocates a PD table from the EPT memory pool and updates the PDPTE
+OMBRA_STATUS EptSplit1GbTo2Mb(EPT_STATE* ept, U64 guestPhysical);
+
+// Split a 2MB page into 512 x 4KB pages
+// This allocates a PT table from the EPT memory pool and updates the PDE
+// The 1GB page containing this 2MB page must be split to 2MB first
+OMBRA_STATUS EptSplit2MbTo4Kb(EPT_STATE* ept, U64 guestPhysical);
 
 // =============================================================================
 // EPT Query Functions

@@ -147,18 +147,20 @@ class HypervisorAnalyzer(BaseAnalyzer):
         return "hypervisor"
 
     def should_analyze(self, path: Path) -> bool:
-        """Only analyze files in hypervisor directory or with VMX-related names."""
+        """Only analyze kernel-mode hypervisor code."""
         if path.suffix not in self.EXTENSIONS:
             return False
 
-        path_str = str(path).lower()
-        relevant_dirs = ["hypervisor", "vmx", "vmcs", "ept", "handler"]
-        relevant_names = ["vmx", "vmcs", "ept", "exit", "vmexit", "handler", "cpuid", "msr"]
+        path_str = str(path)
 
-        return (
-            any(d in path_str for d in relevant_dirs) or
-            any(n in path.stem.lower() for n in relevant_names)
-        )
+        # ONLY analyze files in the actual hypervisor kernel directory
+        # NOT usermode code (byovd, loader, etc)
+        kernel_paths = [
+            "/hypervisor/hypervisor/",  # Kernel VMX code
+            "/hypervisor/driver/",       # Driver entry (if exists)
+        ]
+
+        return any(kernel_path in path_str for kernel_path in kernel_paths)
 
     def analyze(self, path: Path) -> List[Dict[str, Any]]:
         """Run all hypervisor checks on a file."""
@@ -268,8 +270,16 @@ class HypervisorAnalyzer(BaseAnalyzer):
         """Check CPUID handler for proper stealth."""
         findings = []
 
-        # Only check files that look like CPUID handlers
-        if "cpuid" not in path.stem.lower() and "cpuid" not in content.lower():
+        # Only check actual CPUID handler files
+        # Must either be named cpuid.c/cpuid.h OR handle EXIT_REASON_CPUID
+        is_cpuid_handler = (
+            "cpuid" in path.stem.lower() or
+            "case 10:" in content or  # EXIT_REASON_CPUID = 10
+            "case EXIT_REASON_CPUID" in content or
+            "EXIT_REASON_CPUID:" in content
+        )
+
+        if not is_cpuid_handler:
             return findings
 
         # Check for hypervisor bit handling
@@ -301,8 +311,17 @@ class HypervisorAnalyzer(BaseAnalyzer):
         """Check MSR handler for proper stealth."""
         findings = []
 
-        # Only check files that look like MSR handlers
-        if "msr" not in path.stem.lower() and "rdmsr" not in content.lower():
+        # Only check actual MSR handler files
+        # Must either be named msr.c/msr.h OR handle EXIT_REASON_RDMSR/WRMSR
+        is_msr_handler = (
+            "msr" in path.stem.lower() or
+            "case 31:" in content or  # EXIT_REASON_RDMSR = 31
+            "case 32:" in content or  # EXIT_REASON_WRMSR = 32
+            "case EXIT_REASON_RDMSR" in content or
+            "case EXIT_REASON_WRMSR" in content
+        )
+
+        if not is_msr_handler:
             return findings
 
         # Check for VMX MSR handling
@@ -365,18 +384,36 @@ class HypervisorAnalyzer(BaseAnalyzer):
         """Check EPT code for common issues."""
         findings = []
 
-        if "ept" not in path.stem.lower() and "ept" not in content.lower():
+        # Only check actual EPT implementation files
+        # Must be in ept.c/ept.h OR handle EPT violations
+        is_ept_code = (
+            "ept" in path.stem.lower() or
+            "case 48:" in content or  # EXIT_REASON_EPT_VIOLATION = 48
+            "case EXIT_REASON_EPT_VIOLATION" in content or
+            "EPT_PML4E" in content or
+            "ept_pml4" in content.lower()
+        )
+
+        if not is_ept_code:
             return findings
 
         # Check for INVEPT usage after EPT modifications
-        if "ept" in content.lower() and "write" in content.lower():
-            if not PATTERNS["invept"].search(content):
-                findings.append(self.make_finding(
-                    severity="warning",
-                    check_id="ept_no_invept",
-                    message="EPT modifications detected but no INVEPT call found",
-                    suggested_fix="Call INVEPT after modifying EPT structures"
-                ))
+        # Look for actual EPT entry modifications (assignment to EPT structures)
+        has_ept_writes = any([
+            "pml4[" in content and "=" in content,
+            "pdpt[" in content and "=" in content,
+            "pd[" in content and "=" in content,
+            "pt[" in content and "=" in content,
+            "->read =" in content or "->write =" in content or "->execute =" in content,
+        ])
+
+        if has_ept_writes and not PATTERNS["invept"].search(content):
+            findings.append(self.make_finding(
+                severity="warning",
+                check_id="ept_no_invept",
+                message="EPT modifications detected but no INVEPT call found",
+                suggested_fix="Call INVEPT after modifying EPT structures"
+            ))
 
         # Check for RWX pages (should be avoided for hooks)
         for i, line in enumerate(lines, 1):

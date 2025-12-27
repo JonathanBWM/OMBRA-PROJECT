@@ -1,5 +1,35 @@
 // hooks.c — EPT Hook Framework Implementation
 // OmbraHypervisor
+//
+// =============================================================================
+// CRITICAL REQUIREMENT: Identity Mapped Physical Memory
+// =============================================================================
+//
+// This hook framework REQUIRES that the hypervisor has identity-mapped all
+// guest physical memory in its own address space (HVA == HPA).
+//
+// Background:
+//   - EPT translates Guest Physical Address (GPA) -> Host Physical Address (HPA)
+//   - Guest page tables translate Guest Virtual (GVA) -> GPA
+//   - Hypervisor page tables translate Host Virtual (HVA) -> HPA
+//
+// The hypervisor runs with its own CR3 (host page tables), NOT the guest's CR3.
+// When we hook guest code, we need to:
+//   1. Read the original guest physical page (need HPA -> HVA translation)
+//   2. Copy it to a shadow page
+//   3. Modify the shadow page with our hook code
+//   4. Update EPT to point executes to the shadow page
+//
+// Without identity mapping, we cannot access guest physical pages from the
+// hypervisor context. We would need:
+//   - On-demand mapping via hypervisor page tables
+//   - A translation cache for frequently accessed pages
+//   - Special MMIO windows for physical memory access
+//
+// Current implementation: Assumes identity mapping with validation checks
+// Production implementation: Would require proper HPA->HVA translation layer
+//
+// =============================================================================
 
 #include "hooks.h"
 #include "ept.h"
@@ -8,7 +38,26 @@
 #include "../shared/ept_defs.h"
 
 // =============================================================================
+// Global Hook Manager Instance
+// =============================================================================
+
+HOOK_MANAGER g_HookManager = {0};
+
+// =============================================================================
 // Internal Helpers
+// =============================================================================
+
+
+
+// Get deobfuscated hook magic at runtime (defeats signature scanning)
+
+static inline U64 hook_get_magic(void) {
+
+    return ombra_deobf_magic(OMBRA_HOOK_MAGIC_OBF);
+
+}
+
+
 // =============================================================================
 
 static void ZeroMemory(void* ptr, U64 size) {
@@ -23,17 +72,146 @@ static void CopyMemory(void* dst, const void* src, U64 size) {
 }
 
 // =============================================================================
+// Physical Memory Access - Identity Mapping Required
+// =============================================================================
+//
+// IMPORTANT: This hook framework requires the hypervisor to have identity-mapped
+// all physical memory in its own address space (HVA == HPA).
+//
+// Why: We need to access guest physical pages from the hypervisor to:
+//   1. Copy original page contents to shadow pages
+//   2. Read/write hook trampolines
+//   3. Modify code pages for inline hooks
+//
+// The hypervisor runs with its own CR3 (host page tables), NOT the guest's CR3.
+// EPT controls GPA->HPA translation for the GUEST.
+// The HYPERVISOR needs HPA->HVA translation to access those pages.
+//
+// Current approach: Assume HVA == HPA (identity mapping)
+// Production approach would:
+//   - Map specific physical pages on-demand via page tables
+//   - Maintain a translation table for mapped regions
+//   - Use a dedicated memory window for physical access
+//
+// Validation: We perform basic sanity checks by reading magic bytes when possible.
+
+static bool ValidatePhysicalAccess(U64 physicalAddr, U64 expectedSize) {
+    // Basic validation: check if address is within reasonable bounds
+    // Most physical memory is below 512GB in our EPT map
+    if (physicalAddr >= (512ULL * 1024 * 1024 * 1024)) {
+        ERR("Physical address 0x%llx beyond 512GB - likely invalid", physicalAddr);
+        return false;
+    }
+
+    // Check alignment for page access
+    if (expectedSize >= 4096 && (physicalAddr & 0xFFF) != 0) {
+        WARN("Physical address 0x%llx not page-aligned for %llu-byte access",
+             physicalAddr, expectedSize);
+    }
+
+    return true;
+}
+
+static void* PhysicalToVirtual(U64 physicalAddr) {
+    // ASSUMPTION: Identity mapping (HVA == HPA)
+    // This works because the hypervisor has mapped all physical memory 1:1
+    // in its own page tables (separate from guest page tables and EPT)
+    return (void*)physicalAddr;
+}
+
+static bool TryReadPhysical(U64 physicalAddr, void* buffer, U64 size) {
+    if (!ValidatePhysicalAccess(physicalAddr, size)) {
+        return false;
+    }
+
+    void* virtualAddr = PhysicalToVirtual(physicalAddr);
+    if (!virtualAddr) {
+        ERR("Failed to translate physical 0x%llx to virtual", physicalAddr);
+        return false;
+    }
+
+    // Attempt to read - in a full implementation, this would be wrapped
+    // in exception handling to catch page faults
+    CopyMemory(buffer, virtualAddr, size);
+    return true;
+}
+
+static bool TryWritePhysical(U64 physicalAddr, const void* buffer, U64 size) {
+    if (!ValidatePhysicalAccess(physicalAddr, size)) {
+        return false;
+    }
+
+    void* virtualAddr = PhysicalToVirtual(physicalAddr);
+    if (!virtualAddr) {
+        ERR("Failed to translate physical 0x%llx to virtual", physicalAddr);
+        return false;
+    }
+
+    // Attempt to write
+    CopyMemory(virtualAddr, buffer, size);
+    return true;
+}
+
+// =============================================================================
 // Hook Manager Initialization
 // =============================================================================
 
+static OMBRA_STATUS ValidateIdentityMapping(EPT_STATE* ept) {
+    // Test that we can access EPT structures through identity mapping
+    // The EPT PML4 should be accessible at its physical address
+    if (!ept || !ept->Pml4Physical) {
+        ERR("Invalid EPT state for identity mapping test");
+        return OMBRA_ERROR_INVALID_PARAM;
+    }
+
+    // Try to read the PML4 physical address as a virtual address
+    void* pml4Va = PhysicalToVirtual(ept->Pml4Physical);
+    if (!pml4Va) {
+        ERR("Identity mapping failed: Cannot translate PML4 physical 0x%llx",
+            ept->Pml4Physical);
+        return OMBRA_ERROR_INVALID_STATE;
+    }
+
+    // Verify the content matches what we expect
+    EPT_PML4E* testPml4 = (EPT_PML4E*)pml4Va;
+    if (testPml4 != ept->Pml4) {
+        ERR("Identity mapping verification failed: VA mismatch");
+        ERR("  Expected VA: %p", ept->Pml4);
+        ERR("  Identity VA:  %p", testPml4);
+        return OMBRA_ERROR_INVALID_STATE;
+    }
+
+    // Verify we can read the first entry
+    U64 firstEntry = testPml4[0].Value;
+    if (firstEntry == 0) {
+        WARN("PML4[0] is zero - EPT may not be initialized yet");
+    }
+
+    TRACE("Identity mapping validated: PML4 PA=0x%llx accessible at VA=%p",
+          ept->Pml4Physical, pml4Va);
+
+    return OMBRA_SUCCESS;
+}
+
 OMBRA_STATUS HookManagerInit(HOOK_MANAGER* mgr, EPT_STATE* ept) {
+    OMBRA_STATUS status;
+
     if (!mgr || !ept) {
         return OMBRA_ERROR_INVALID_PARAM;
     }
 
     INFO("Initializing hook manager");
 
+    // Validate that identity mapping is working
+    status = ValidateIdentityMapping(ept);
+    if (OMBRA_FAILED(status)) {
+        ERR("Hook manager requires identity-mapped physical memory (HVA == HPA)");
+        ERR("The hypervisor must map all physical memory 1:1 in its page tables");
+        return status;
+    }
+
     ZeroMemory(mgr, sizeof(HOOK_MANAGER));
+    SpinLockInit(&mgr->Lock);
     mgr->Ept = ept;
     mgr->Initialized = true;
 
@@ -95,21 +273,17 @@ OMBRA_STATUS EptSplit1GbTo2Mb(EPT_STATE* ept, U64 guestPhysical) {
     // In a real implementation, this would allocate from the shadow pool
     // For now, we'll just use a pre-allocated area from EptTables
 
-    // TODO: Allocate PD table from pool
-    // For now, we store split PDs after the PDPT
-    // ept->EptTables has EPT_TABLES_PAGES (512) pages
-    // PML4 = page 0, PDPT = page 1, PDs = pages 2+
-
-    if (ept->SplitPdCount >= 510) {  // Leave room for PML4 + PDPT
-        ERR("No more space for PD tables");
+    // Check if we have space for another PD table
+    if (ept->PagesUsed >= ept->TotalPagesAllocated) {
+        ERR("No more space for PD tables (used=%u, total=%u)",
+            ept->PagesUsed, ept->TotalPagesAllocated);
         return OMBRA_ERROR_NO_MEMORY;
     }
-
-    // Calculate address for new PD (after PDPT)
-    U64 pdOffset = (2 + ept->SplitPdCount) * 4096;
+    // Calculate address for new PD using PagesUsed counter
+    // This ensures we don't overlap with existing pages
+    U64 pdOffset = ept->PagesUsed * 4096;
     pd = (EPT_PDE*)((U8*)ept->Pml4 + pdOffset);
     U64 pdPhysical = ept->Pml4Physical + pdOffset;
-
     INFO("Splitting 1GB page at PDPT[%u] into 2MB pages (PD at 0x%llx)",
          pdptIndex, pdPhysical);
 
@@ -138,6 +312,7 @@ OMBRA_STATUS EptSplit1GbTo2Mb(EPT_STATE* ept, U64 guestPhysical) {
     pdpte->Pointer.ExecuteUser = 1;
     pdpte->Pointer.PdPhysAddr = pdPhysical >> 12;
 
+    ept->PagesUsed++;
     ept->SplitPdCount++;
 
     // Invalidate EPT
@@ -183,15 +358,13 @@ OMBRA_STATUS EptSplit2MbTo4Kb(EPT_STATE* ept, U64 guestPhysical) {
         return OMBRA_ERROR_INVALID_STATE;
     }
 
-    // Get PD address
-    U64 pdPhysical = pdpte->Directory.PdPhysAddr << 12;
-    // Convert physical to virtual (assuming identity mapping for now)
-    EPT_PDE* pd = (EPT_PDE*)(pdPhysical);  // Simplified - need proper VA translation
+    // Get PD address (from PDPTE pointer format, not large page format)
+    U64 pdPhysical = pdpte->Pointer.PdPhysAddr << 12;
 
-    // Actually, we stored PDs in our EptTables region, so we can calculate
-    // This is hacky - proper implementation would track allocations
+    // The PD is in our EPT tables region, which we allocated and track
+    // Calculate offset from base to get virtual address
     U64 pdOffset = pdPhysical - ept->Pml4Physical;
-    pd = (EPT_PDE*)((U8*)ept->Pml4 + pdOffset);
+    EPT_PDE* pd = (EPT_PDE*)((U8*)ept->Pml4 + pdOffset);
 
     pde = &pd[pdIndex];
 
@@ -207,12 +380,14 @@ OMBRA_STATUS EptSplit2MbTo4Kb(EPT_STATE* ept, U64 guestPhysical) {
 
     // Store PTs after PDs (rough estimate: 512 possible PDs, then PTs)
     // This is simplified - real implementation needs proper memory management
-    if (ept->SplitPtCount >= 256) {
-        ERR("No more space for PT tables");
+    // Check if we have space for another PT table
+    if (ept->PagesUsed >= ept->TotalPagesAllocated) {
+        ERR("No more space for PT tables (used=%u, total=%u)",
+            ept->PagesUsed, ept->TotalPagesAllocated);
         return OMBRA_ERROR_NO_MEMORY;
     }
-
-    U64 ptOffset = (2 + 510 + ept->SplitPtCount) * 4096;  // After PML4, PDPT, max PDs
+    // Calculate address for new PT using PagesUsed counter
+    U64 ptOffset = ept->PagesUsed * 4096;
     pt = (EPT_PTE*)((U8*)ept->Pml4 + ptOffset);
     U64 ptPhysical = ept->Pml4Physical + ptOffset;
 
@@ -243,6 +418,7 @@ OMBRA_STATUS EptSplit2MbTo4Kb(EPT_STATE* ept, U64 guestPhysical) {
     pde->Pointer.ExecuteUser = 1;
     pde->Pointer.PtPhysAddr = ptPhysical >> 12;
 
+    ept->PagesUsed++;
     ept->SplitPtCount++;
 
     // Invalidate EPT
@@ -270,6 +446,8 @@ OMBRA_STATUS HookInstallEpt(
         return OMBRA_ERROR_INVALID_PARAM;
     }
 
+    SpinLockAcquire(&mgr->Lock);
+
     INFO("Installing EPT hook at VA=0x%llx PA=0x%llx", targetVirtual, targetPhysical);
 
     // Find free hook slot
@@ -282,6 +460,7 @@ OMBRA_STATUS HookInstallEpt(
 
     if (!hook) {
         ERR("No free hook slots available");
+        SpinLockRelease(&mgr->Lock);
         return OMBRA_ERROR_NO_MEMORY;
     }
 
@@ -289,6 +468,7 @@ OMBRA_STATUS HookInstallEpt(
     OMBRA_STATUS status = EptSplit2MbTo4Kb(mgr->Ept, targetPhysical);
     if (OMBRA_FAILED(status)) {
         ERR("Failed to split EPT pages for hook");
+        SpinLockRelease(&mgr->Lock);
         return status;
     }
 
@@ -297,19 +477,28 @@ OMBRA_STATUS HookInstallEpt(
     void* shadowVirtual = HookAllocateShadowPage(mgr, &shadowPhysical);
     if (!shadowVirtual) {
         ERR("Failed to allocate shadow page");
+        SpinLockRelease(&mgr->Lock);
         return OMBRA_ERROR_NO_MEMORY;
     }
 
     // Copy original page content to shadow page
-    void* targetPage = (void*)(targetPhysical);  // Simplified VA translation
-    CopyMemory(shadowVirtual, targetPage, 4096);
+    // REQUIRES: Hypervisor has identity-mapped physical memory (HVA == HPA)
+    U8 tempBuffer[4096];
+    if (!TryReadPhysical(targetPhysical & ~0xFFFULL, tempBuffer, 4096)) {
+        ERR("Failed to read target page at PA=0x%llx - not mapped in hypervisor space?",
+            targetPhysical);
+        HookFreeShadowPage(mgr, shadowVirtual);
+        SpinLockRelease(&mgr->Lock);
+        return OMBRA_ERROR_INVALID_PARAM;
+    }
+    CopyMemory(shadowVirtual, tempBuffer, 4096);
 
     // Install jump to handler at target offset in shadow page
     U32 offset = targetVirtual & 0xFFF;
     U8* hookPoint = (U8*)shadowVirtual + offset;
 
-    // Save original bytes
-    CopyMemory(hook->OriginalBytes, hookPoint, 16);
+    // Save original bytes from the buffer we just read
+    CopyMemory(hook->OriginalBytes, tempBuffer + offset, 16);
 
     // Write JMP to handler (64-bit absolute jump)
     // FF 25 00 00 00 00 [8-byte address]
@@ -323,7 +512,7 @@ OMBRA_STATUS HookInstallEpt(
     hook->OriginalLength = 14;  // Size of our JMP
 
     // Setup hook structure
-    hook->Magic = HOOK_MAGIC;
+    hook->Magic = hook_get_magic();
     hook->TargetVirtual = targetVirtual;
     hook->TargetPhysical = targetPhysical;
     hook->TargetOffset = offset;
@@ -349,6 +538,7 @@ OMBRA_STATUS HookInstallEpt(
     if (!pte) {
         ERR("Failed to get EPT entry for target");
         hook->Active = false;
+        SpinLockRelease(&mgr->Lock);
         return OMBRA_ERROR_NOT_FOUND;
     }
 
@@ -376,6 +566,7 @@ OMBRA_STATUS HookInstallEpt(
     }
 
     INFO("EPT hook installed successfully (slot %u, count=%u)", i, mgr->HookCount);
+    SpinLockRelease(&mgr->Lock);
     return OMBRA_SUCCESS;
 }
 
@@ -384,11 +575,14 @@ OMBRA_STATUS HookInstallEpt(
 // =============================================================================
 
 OMBRA_STATUS HookRemove(HOOK_MANAGER* mgr, EPT_HOOK* hook) {
-    if (!mgr || !hook || hook->Magic != HOOK_MAGIC) {
+    if (!mgr || !hook || hook->Magic != hook_get_magic()) {
         return OMBRA_ERROR_INVALID_PARAM;
     }
 
+    SpinLockAcquire(&mgr->Lock);
+
     if (!hook->Active) {
+        SpinLockRelease(&mgr->Lock);
         return OMBRA_SUCCESS;  // Already removed
     }
 
@@ -413,6 +607,7 @@ OMBRA_STATUS HookRemove(HOOK_MANAGER* mgr, EPT_HOOK* hook) {
     mgr->HookCount--;
 
     INFO("Hook removed (remaining=%u)", mgr->HookCount);
+    SpinLockRelease(&mgr->Lock);
     return OMBRA_SUCCESS;
 }
 
@@ -422,31 +617,43 @@ OMBRA_STATUS HookRemove(HOOK_MANAGER* mgr, EPT_HOOK* hook) {
 
 EPT_HOOK* HookFindByPhysical(HOOK_MANAGER* mgr, U64 physicalAddress) {
     U64 pageBase = physicalAddress & ~0xFFFULL;
+    EPT_HOOK* result = NULL;
+
+    SpinLockAcquire(&mgr->Lock);
 
     for (U32 i = 0; i < MAX_HOOKS; i++) {
         EPT_HOOK* hook = &mgr->Hooks[i];
-        if (hook->Active && hook->Magic == HOOK_MAGIC) {
+        if (hook->Active && hook->Magic == hook_get_magic()) {
             if ((hook->TargetPhysical & ~0xFFFULL) == pageBase ||
                 (hook->ShadowPhysical & ~0xFFFULL) == pageBase) {
-                return hook;
+                result = hook;
+                break;
             }
         }
     }
-    return NULL;
+
+    SpinLockRelease(&mgr->Lock);
+    return result;
 }
 
 EPT_HOOK* HookFindByVirtual(HOOK_MANAGER* mgr, U64 virtualAddress) {
     U64 pageBase = virtualAddress & ~0xFFFULL;
+    EPT_HOOK* result = NULL;
+
+    SpinLockAcquire(&mgr->Lock);
 
     for (U32 i = 0; i < MAX_HOOKS; i++) {
         EPT_HOOK* hook = &mgr->Hooks[i];
-        if (hook->Active && hook->Magic == HOOK_MAGIC) {
+        if (hook->Active && hook->Magic == hook_get_magic()) {
             if ((hook->TargetVirtual & ~0xFFFULL) == pageBase) {
-                return hook;
+                result = hook;
+                break;
             }
         }
     }
-    return NULL;
+
+    SpinLockRelease(&mgr->Lock);
+    return result;
 }
 
 // =============================================================================
@@ -513,21 +720,661 @@ void HookFreeShadowPage(HOOK_MANAGER* mgr, void* page) {
 }
 
 // =============================================================================
-// Hook Enable/Disable
+// Hook Installation - Inline Hook (JMP)
 // =============================================================================
+//
+// Inline hooks use EPT execute-only pages for stealth:
+// - Execute: runs from shadow page (contains JMP to handler)
+// - Read: sees original page (no JMP visible)
+//
+// This defeats signature scanning and code integrity checks.
 
-OMBRA_STATUS HookEnable(EPT_HOOK* hook) {
-    if (!hook || hook->Magic != HOOK_MAGIC) {
+OMBRA_STATUS HookInstallInline(
+    HOOK_MANAGER* mgr,
+    U64 targetVirtual,
+    U64 targetPhysical,
+    void* handlerAddress,
+    EPT_HOOK** outHook
+) {
+    EPT_HOOK* hook = NULL;
+    U32 i;
+
+    if (!mgr || !mgr->Initialized || !handlerAddress) {
         return OMBRA_ERROR_INVALID_PARAM;
     }
+
+    if (!mgr->ShadowPool) {
+        ERR("Shadow pool not allocated");
+        return OMBRA_ERROR_INVALID_STATE;
+    }
+
+    SpinLockAcquire(&mgr->Lock);
+
+    INFO("Installing inline hook at VA=0x%llx PA=0x%llx", targetVirtual, targetPhysical);
+
+    // Find free hook slot
+    for (i = 0; i < MAX_HOOKS; i++) {
+        if (!mgr->Hooks[i].Active) {
+            hook = &mgr->Hooks[i];
+            break;
+        }
+    }
+
+    if (!hook) {
+        ERR("No free hook slots available (max=%u)", MAX_HOOKS);
+        SpinLockRelease(&mgr->Lock);
+        return OMBRA_ERROR_NO_MEMORY;
+    }
+
+    // Split EPT pages down to 4KB granularity for precise hooking
+    OMBRA_STATUS status = EptSplit2MbTo4Kb(mgr->Ept, targetPhysical);
+    if (OMBRA_FAILED(status)) {
+        ERR("Failed to split EPT pages for inline hook: 0x%x", status);
+        SpinLockRelease(&mgr->Lock);
+        return status;
+    }
+
+    // Allocate shadow page for hook code
+    U64 shadowPhysical;
+    void* shadowVirtual = HookAllocateShadowPage(mgr, &shadowPhysical);
+    if (!shadowVirtual) {
+        ERR("Failed to allocate shadow page from pool");
+        SpinLockRelease(&mgr->Lock);
+        return OMBRA_ERROR_NO_MEMORY;
+    }
+
+    // Copy entire original page to shadow page
+    // This preserves all code in the page except our hook point
+    // REQUIRES: Hypervisor has identity-mapped physical memory (HVA == HPA)
+    U64 targetPagePhys = targetPhysical & ~0xFFFULL;
+    U8 tempBuffer[4096];
+    if (!TryReadPhysical(targetPagePhys, tempBuffer, 4096)) {
+        ERR("Failed to read target page at PA=0x%llx - not mapped in hypervisor space?",
+            targetPagePhys);
+        HookFreeShadowPage(mgr, shadowVirtual);
+        ZeroMemory(hook, sizeof(EPT_HOOK));
+        SpinLockRelease(&mgr->Lock);
+        return OMBRA_ERROR_INVALID_PARAM;
+    }
+    CopyMemory(shadowVirtual, tempBuffer, 4096);
+
+    // Calculate hook point offset within the page
+    U32 offset = (U32)(targetVirtual & 0xFFF);
+    U8* hookPoint = (U8*)shadowVirtual + offset;
+
+    // Save original bytes from the buffer we just read
+    CopyMemory(hook->OriginalBytes, tempBuffer + offset, 16);
+
+    // Construct absolute JMP instruction to handler
+    // Format: mov rax, <handler>; jmp rax
+    // Encoding:
+    //   48 B8 [8-byte address]   ; mov rax, immediate64
+    //   FF E0                     ; jmp rax
+    // Total: 12 bytes
+
+    hookPoint[0] = 0x48;  // REX.W prefix
+    hookPoint[1] = 0xB8;  // MOV RAX, imm64
+    *(U64*)(hookPoint + 2) = (U64)handlerAddress;  // 8-byte handler address
+    hookPoint[10] = 0xFF;  // JMP r/m64
+    hookPoint[11] = 0xE0;  // ModRM: register rax
+
+    hook->OriginalLength = 12;  // Size of our JMP stub
+
+    // Initialize hook structure
+    hook->Magic = hook_get_magic();
+    hook->TargetVirtual = targetVirtual;
+    hook->TargetPhysical = targetPhysical & ~0xFFFULL;  // Page-aligned
+    hook->TargetOffset = offset;
+    hook->ShadowPhysical = shadowPhysical;
+    hook->ShadowVirtual = shadowVirtual;
+    hook->HandlerAddress = handlerAddress;
+    hook->TrampolineAddress = NULL;  // TODO: Create trampoline for calling original
+    hook->Type = HOOK_TYPE_INLINE;
     hook->Active = true;
+    hook->Executing = false;
+    hook->HitCount = 0;
+    hook->CpuMask = 0;  // All CPUs
+    hook->Next = NULL;
+
+    // Configure EPT for execute-only shadow page stealth:
+    //
+    // We need TWO EPT entries conceptually (hardware limitation workaround):
+    // 1. For execute: point to shadow page with R=0, W=0, X=1
+    // 2. For read/write: point to original page
+    //
+    // Since we can't have both simultaneously, we use EPT violations:
+    // - Set entry to execute-only shadow (R=0, W=0, X=1, points to shadow)
+    // - On read/write violation, temporarily switch to original, MTF, restore
+    //
+    // This requires MTF (Monitor Trap Flag) support for single-stepping.
+
+    U64* pte = EptGetEntry(mgr->Ept, targetPhysical);
+    if (!pte) {
+        ERR("Failed to get EPT PTE for PA=0x%llx", targetPhysical);
+        HookFreeShadowPage(mgr, shadowVirtual);
+        ZeroMemory(hook, sizeof(EPT_HOOK));
+        SpinLockRelease(&mgr->Lock);
+        return OMBRA_ERROR_NOT_FOUND;
+    }
+
+    EPT_PTE* entry = (EPT_PTE*)pte;
+
+    // Store original PTE configuration (for unhooking)
+    // In full implementation, we'd save this properly
+    // U64 originalPte = entry->Value;
+
+    // Configure EPT PTE for execute-only stealth:
+    // - Point to shadow page (contains hook)
+    // - Execute: allowed (X=1)
+    // - Read: denied (R=0) - will cause EPT violation
+    // - Write: denied (W=0) - will cause EPT violation
+    //
+    // On EPT violation from read/write, HookHandleEptViolation() will:
+    // 1. Switch PTE to original page with R=1, W=1, X=0
+    // 2. Enable MTF (monitor trap flag)
+    // 3. On MTF exit, restore execute-only shadow mapping
+
+    entry->Value = 0;
+    entry->Read = 0;          // Deny read - force violation
+    entry->Write = 0;         // Deny write - force violation
+    entry->Execute = 1;       // Allow execute from shadow
+    entry->ExecuteUser = 1;   // User-mode execute allowed
+    entry->MemoryType = EPT_MEMORY_TYPE_WB;
+    entry->PagePhysAddr = shadowPhysical >> 12;  // Point to shadow page
+
+    // Invalidate EPT TLB to activate new mapping immediately
+    EptInvalidate(mgr->Ept, INVEPT_TYPE_SINGLE_CONTEXT);
+
+    mgr->HookCount++;
+
+    if (outHook) {
+        *outHook = hook;
+    }
+
+    INFO("Inline hook installed (slot=%u, total=%u, shadow=0x%llx)",
+         i, mgr->HookCount, shadowPhysical);
+
+    SpinLockRelease(&mgr->Lock);
     return OMBRA_SUCCESS;
 }
 
-OMBRA_STATUS HookDisable(EPT_HOOK* hook) {
-    if (!hook || hook->Magic != HOOK_MAGIC) {
+// =============================================================================
+// Hook Enable/Disable
+// =============================================================================
+
+OMBRA_STATUS HookEnable(HOOK_MANAGER* mgr, EPT_HOOK* hook) {
+    if (!mgr || !hook || hook->Magic != hook_get_magic()) {
         return OMBRA_ERROR_INVALID_PARAM;
     }
-    hook->Active = false;
+
+    SpinLockAcquire(&mgr->Lock);
+    hook->Active = true;
+    SpinLockRelease(&mgr->Lock);
+
     return OMBRA_SUCCESS;
+}
+
+OMBRA_STATUS HookDisable(HOOK_MANAGER* mgr, EPT_HOOK* hook) {
+    if (!mgr || !hook || hook->Magic != hook_get_magic()) {
+        return OMBRA_ERROR_INVALID_PARAM;
+    }
+
+    SpinLockAcquire(&mgr->Lock);
+    hook->Active = false;
+    SpinLockRelease(&mgr->Lock);
+
+    return OMBRA_SUCCESS;
+}
+
+// =============================================================================
+// Shadow Hook Implementation
+// =============================================================================
+//
+// Shadow hooks use execute-only EPT pages to present different memory views:
+// - Execute access: Shows shadow page with hook installed
+// - Read/Write access: Shows original page (clean, no hook visible)
+//
+// This defeats code integrity checks and memory scanners while allowing hooks
+// to execute normally.
+//
+// Implementation uses Monitor Trap Flag (MTF) for view switching:
+// 1. Page configured as execute-only (R=0, W=0, X=1) pointing to shadow
+// 2. On read/write EPT violation, switch to original page (R=1, W=1, X=0)
+// 3. Enable MTF to single-step one instruction
+// 4. On MTF exit, restore execute-only shadow view
+// =============================================================================
+
+// =============================================================================
+// Helper: Create Trampoline
+// =============================================================================
+//
+// Creates a code stub that executes original bytes then jumps back.
+// This allows the hook handler to call the original function if needed.
+//
+// Trampoline format:
+//   [original instruction bytes]
+//   JMP QWORD PTR [RIP+0]  ; FF 25 00 00 00 00
+//   [8-byte return address]
+
+static void CreateTrampoline(
+    U8* trampoline,
+    const U8* originalBytes,
+    U32 originalLen,
+    U64 returnAddr)
+{
+    U32 i;
+
+    // Copy original instructions
+    for (i = 0; i < originalLen && i < 16; i++) {
+        trampoline[i] = originalBytes[i];
+    }
+
+    // Append absolute JMP to return address
+    // JMP QWORD PTR [RIP+0] = FF 25 00 00 00 00 <8-byte addr>
+    trampoline[originalLen + 0] = 0xFF;
+    trampoline[originalLen + 1] = 0x25;
+    trampoline[originalLen + 2] = 0x00;
+    trampoline[originalLen + 3] = 0x00;
+    trampoline[originalLen + 4] = 0x00;
+    trampoline[originalLen + 5] = 0x00;
+
+    // 8-byte absolute address follows
+    *(U64*)&trampoline[originalLen + 6] = returnAddr;
+
+    TRACE("Trampoline created: %u bytes original + 14 byte JMP to 0x%llx",
+          originalLen, returnAddr);
+}
+
+// =============================================================================
+// Helper: Install Inline Hook in Shadow Page
+// =============================================================================
+//
+// Writes a JMP instruction at the specified offset in the shadow page.
+// The JMP redirects execution to the hook handler.
+//
+// Hook format (14 bytes):
+//   JMP QWORD PTR [RIP+0]  ; FF 25 00 00 00 00
+//   [8-byte handler address]
+
+static void InstallInlineHook(
+    U8* shadowPage,
+    U32 offset,
+    U64 handlerAddr)
+{
+    U8* hookLocation = shadowPage + offset;
+
+    // Write JMP QWORD PTR [RIP+0]
+    hookLocation[0] = 0xFF;     // JMP opcode
+    hookLocation[1] = 0x25;     // ModR/M: [RIP+disp32]
+    hookLocation[2] = 0x00;     // disp32 = 0
+    hookLocation[3] = 0x00;
+    hookLocation[4] = 0x00;
+    hookLocation[5] = 0x00;
+
+    // 8-byte absolute address follows immediately
+    *(U64*)(hookLocation + 6) = handlerAddr;
+
+    TRACE("Inline hook installed at offset 0x%x -> 0x%llx", offset, handlerAddr);
+}
+
+// =============================================================================
+// Install Shadow Hook
+// =============================================================================
+
+OMBRA_STATUS HookInstallShadow(
+    HOOK_MANAGER* mgr,
+    U64 targetGpa,
+    U64 handlerAddress,
+    U32 originalLength,
+    void* shadowPage,
+    U64 shadowHpa,
+    SHADOW_HOOK** outHook)
+{
+    SHADOW_HOOK* hook = NULL;
+    U64 pageBase;
+    U32 offset;
+    U64 originalHpa;
+    U8 tempBuffer[4096];
+    U32 i;
+    EPT_PTE* pte;
+
+    if (!mgr || !mgr->Initialized || !shadowPage) {
+        return OMBRA_ERROR_INVALID_PARAM;
+    }
+
+    if (originalLength < 14) {
+        ERR("Shadow hook requires at least 14 bytes (got %u)", originalLength);
+        return OMBRA_ERROR_INVALID_PARAM;
+    }
+
+    SpinLockAcquire(&mgr->Lock);
+
+    // Find free shadow hook slot
+    for (i = 0; i < MAX_SHADOW_HOOKS; i++) {
+        if (!mgr->ShadowHooks[i].Active) {
+            hook = &mgr->ShadowHooks[i];
+            break;
+        }
+    }
+
+    if (!hook) {
+        ERR("No free shadow hook slots (max=%u)", MAX_SHADOW_HOOKS);
+        SpinLockRelease(&mgr->Lock);
+        return OMBRA_ERROR_NO_MEMORY;
+    }
+
+    INFO("Installing shadow hook at GPA=0x%llx handler=0x%llx",
+         targetGpa, handlerAddress);
+
+    // Calculate page-aligned GPA and offset
+    pageBase = targetGpa & ~0xFFFULL;
+    offset = (U32)(targetGpa & 0xFFF);
+
+    // Split EPT pages to 4KB granularity
+    OMBRA_STATUS status = EptSplit2MbTo4Kb(mgr->Ept, pageBase);
+    if (OMBRA_FAILED(status)) {
+        ERR("Failed to split EPT pages: 0x%x", status);
+        SpinLockRelease(&mgr->Lock);
+        return status;
+    }
+
+    // Get EPT PTE for target page
+    U64* pteValue = EptGetEntry(mgr->Ept, pageBase);
+    if (!pteValue) {
+        ERR("Failed to get EPT entry for GPA=0x%llx", pageBase);
+        SpinLockRelease(&mgr->Lock);
+        return OMBRA_ERROR_NOT_FOUND;
+    }
+
+    pte = (EPT_PTE*)pteValue;
+
+    // Get original physical address from current EPT entry
+    originalHpa = (U64)pte->PagePhysAddr << 12;
+
+    // Read original page content
+    // REQUIRES: Identity mapping (HVA == HPA)
+    if (!TryReadPhysical(originalHpa, tempBuffer, 4096)) {
+        ERR("Failed to read original page at HPA=0x%llx", originalHpa);
+        SpinLockRelease(&mgr->Lock);
+        return OMBRA_ERROR_INVALID_PARAM;
+    }
+
+    // Caller should have already allocated shadowPage, but verify it's not used
+    // Copy original page to shadow page
+    CopyMemory(shadowPage, tempBuffer, 4096);
+
+    // Save original bytes from target offset
+    CopyMemory(hook->OriginalBytes, tempBuffer + offset,
+               originalLength < 16 ? originalLength : 16);
+    hook->OriginalLength = originalLength;
+
+    // Install hook in shadow page
+    InstallInlineHook((U8*)shadowPage, offset, handlerAddress);
+
+    // Create trampoline for calling original code
+    // Return address is target + originalLength (skip hooked bytes)
+    CreateTrampoline(hook->Trampoline, hook->OriginalBytes,
+                     originalLength, targetGpa + originalLength);
+
+    // Initialize hook structure
+    hook->Magic = hook_get_magic();
+    hook->TargetGpa = targetGpa;
+    hook->TargetOffset = offset;
+    hook->OriginalHpa = originalHpa;
+    hook->ShadowHpa = shadowHpa;
+    hook->HandlerAddress = handlerAddress;
+    hook->Pte = pte;
+    hook->Active = true;
+    hook->InRwView = false;
+    hook->HitCount = 0;
+    hook->TrampolineGpa = 0;  // Caller can set this if trampoline is mapped
+
+    // Configure EPT for execute-only shadow page
+    // R=0, W=0, X=1 pointing to shadow
+    // This will cause EPT violation on read/write, allowing view switch
+    pte->Value = 0;
+    pte->Read = 0;          // Deny read - triggers EPT violation
+    pte->Write = 0;         // Deny write - triggers EPT violation
+    pte->Execute = 1;       // Allow execute from shadow
+    pte->ExecuteUser = 1;   // User-mode execute allowed
+    pte->MemoryType = EPT_MEMORY_TYPE_WB;
+    pte->PagePhysAddr = shadowHpa >> 12;  // Point to shadow page
+
+    // Invalidate EPT TLB
+    EptInvalidate(mgr->Ept, INVEPT_TYPE_SINGLE_CONTEXT);
+
+    mgr->ShadowHookCount++;
+
+    if (outHook) {
+        *outHook = hook;
+    }
+
+    INFO("Shadow hook installed (slot=%u, total=%u, shadow HPA=0x%llx)",
+         i, mgr->ShadowHookCount, shadowHpa);
+
+    SpinLockRelease(&mgr->Lock);
+    return OMBRA_SUCCESS;
+}
+
+// =============================================================================
+// Remove Shadow Hook
+// =============================================================================
+
+OMBRA_STATUS HookRemoveShadow(HOOK_MANAGER* mgr, SHADOW_HOOK* hook) {
+    if (!mgr || !hook || hook->Magic != hook_get_magic()) {
+        return OMBRA_ERROR_INVALID_PARAM;
+    }
+
+    SpinLockAcquire(&mgr->Lock);
+
+    if (!hook->Active) {
+        SpinLockRelease(&mgr->Lock);
+        return OMBRA_SUCCESS;  // Already removed
+    }
+
+    INFO("Removing shadow hook at GPA=0x%llx", hook->TargetGpa);
+
+    // Restore EPT to point to original page with full permissions
+    hook->Pte->Value = 0;
+    hook->Pte->Read = 1;
+    hook->Pte->Write = 1;
+    hook->Pte->Execute = 1;
+    hook->Pte->ExecuteUser = 1;
+    hook->Pte->MemoryType = EPT_MEMORY_TYPE_WB;
+    hook->Pte->PagePhysAddr = hook->OriginalHpa >> 12;
+
+    // Invalidate EPT
+    EptInvalidate(mgr->Ept, INVEPT_TYPE_SINGLE_CONTEXT);
+
+    // Clear hook state
+    hook->Active = false;
+    hook->InRwView = false;
+    hook->Magic = 0;
+    mgr->ShadowHookCount--;
+
+    INFO("Shadow hook removed (remaining=%u)", mgr->ShadowHookCount);
+
+    SpinLockRelease(&mgr->Lock);
+    return OMBRA_SUCCESS;
+}
+
+// =============================================================================
+// Find Shadow Hook by GPA
+// =============================================================================
+
+SHADOW_HOOK* HookFindShadowByGpa(HOOK_MANAGER* mgr, U64 gpa) {
+    U64 pageBase = gpa & ~0xFFFULL;
+    SHADOW_HOOK* result = NULL;
+    U32 i;
+
+    if (!mgr) return NULL;
+
+    SpinLockAcquire(&mgr->Lock);
+
+    for (i = 0; i < MAX_SHADOW_HOOKS; i++) {
+        SHADOW_HOOK* hook = &mgr->ShadowHooks[i];
+        if (hook->Active && hook->Magic == hook_get_magic()) {
+            if ((hook->TargetGpa & ~0xFFFULL) == pageBase) {
+                result = hook;
+                break;
+            }
+        }
+    }
+
+    SpinLockRelease(&mgr->Lock);
+    return result;
+}
+
+// =============================================================================
+// Handle EPT Violation for Shadow Hooks
+// =============================================================================
+//
+// When the guest tries to READ or WRITE a hooked execute-only page:
+// 1. EPT violation occurs (access denied on X-only page)
+// 2. We check if it's a shadow hook page
+// 3. Switch EPT to show original page (R=1, W=1, X=0)
+// 4. Enable Monitor Trap Flag (MTF) for single-stepping
+// 5. Resume guest - it executes one instruction seeing original bytes
+// 6. MTF fires after one instruction
+// 7. Restore execute-only shadow view
+//
+// This makes the hook completely invisible to code integrity checks and scanners.
+
+bool HookHandleEptViolationShadow(
+    HOOK_MANAGER* mgr,
+    U64 faultingGpa,
+    bool wasRead,
+    bool wasWrite,
+    bool wasExecute)
+{
+    SHADOW_HOOK* hook;
+    U64 procBasedControls;
+
+    (void)wasExecute;  // Execute violations shouldn't happen on X-only pages
+
+    if (!mgr || !mgr->Initialized) {
+        return false;
+    }
+
+    // Check if this is a shadow hook page
+    hook = HookFindShadowByGpa(mgr, faultingGpa);
+    if (!hook) {
+        return false;  // Not our hook
+    }
+
+    if (!hook->Active) {
+        return false;
+    }
+
+    // Only handle read/write violations
+    // Execute violations shouldn't occur since we have X=1
+    if (!wasRead && !wasWrite) {
+        WARN("Shadow hook violation without R/W access? GPA=0x%llx", faultingGpa);
+        return false;
+    }
+
+    TRACE("Shadow hook EPT violation: GPA=0x%llx R=%d W=%d (switching to RW view)",
+          faultingGpa, wasRead, wasWrite);
+
+    hook->HitCount++;
+
+    // Switch to RW view (original page)
+    hook->Pte->Value = 0;
+    hook->Pte->Read = 1;         // Allow read
+    hook->Pte->Write = 1;        // Allow write
+    hook->Pte->Execute = 0;      // Deny execute (shows original, not shadow)
+    hook->Pte->ExecuteUser = 0;
+    hook->Pte->MemoryType = EPT_MEMORY_TYPE_WB;
+    hook->Pte->PagePhysAddr = hook->OriginalHpa >> 12;  // Point to original
+
+    hook->InRwView = true;
+
+    // Enable Monitor Trap Flag (MTF) to single-step
+    // After the guest executes one instruction, we'll get MTF exit
+    // and restore the execute-only view
+    procBasedControls = VmcsRead(VMCS_CTRL_PROC_BASED);
+    procBasedControls |= CPU_MONITOR_TRAP;
+    VmcsWrite(VMCS_CTRL_PROC_BASED, procBasedControls);
+
+    // Invalidate EPT
+    EptInvalidate(mgr->Ept, INVEPT_TYPE_SINGLE_CONTEXT);
+
+    TRACE("Switched to RW view, MTF enabled");
+    return true;
+}
+
+// =============================================================================
+// Handle MTF (Monitor Trap Flag) Exit
+// =============================================================================
+//
+// Called when MTF trap fires after single-stepping past a read/write.
+// We restore the execute-only shadow view and disable MTF.
+
+void HookHandleMtf(HOOK_MANAGER* mgr, U64 guestRip) {
+    U32 i;
+    U64 procBasedControls;
+    bool foundHook = false;
+
+    if (!mgr || !mgr->Initialized) {
+        return;
+    }
+
+    // Find any shadow hook that's currently in RW view
+    // We need to restore it to execute-only
+    for (i = 0; i < MAX_SHADOW_HOOKS; i++) {
+        SHADOW_HOOK* hook = &mgr->ShadowHooks[i];
+
+        if (hook->Active && hook->InRwView) {
+            // Check if RIP is still on this page
+            // If so, we may need to wait for another MTF
+            U64 ripPage = guestRip & ~0xFFFULL;
+            U64 hookPage = hook->TargetGpa & ~0xFFFULL;
+
+            if (ripPage == hookPage) {
+                // Still executing on hooked page
+                // Keep RW view for now, MTF will fire again
+                TRACE("MTF: RIP still on hook page (0x%llx), keeping RW view",
+                      guestRip);
+                foundHook = true;
+                continue;
+            }
+
+            // Restore execute-only shadow view
+            TRACE("MTF: Restoring X-only shadow view for hook at 0x%llx",
+                  hook->TargetGpa);
+
+            hook->Pte->Value = 0;
+            hook->Pte->Read = 0;         // Deny read
+            hook->Pte->Write = 0;        // Deny write
+            hook->Pte->Execute = 1;      // Allow execute
+            hook->Pte->ExecuteUser = 1;
+            hook->Pte->MemoryType = EPT_MEMORY_TYPE_WB;
+            hook->Pte->PagePhysAddr = hook->ShadowHpa >> 12;  // Shadow page
+
+            hook->InRwView = false;
+            foundHook = true;
+
+            // Invalidate EPT
+            EptInvalidate(mgr->Ept, INVEPT_TYPE_SINGLE_CONTEXT);
+        }
+    }
+
+    // Disable MTF if we restored all hooks
+    if (foundHook) {
+        // Check if any hooks still need MTF
+        bool needMtf = false;
+        for (i = 0; i < MAX_SHADOW_HOOKS; i++) {
+            if (mgr->ShadowHooks[i].Active && mgr->ShadowHooks[i].InRwView) {
+                needMtf = true;
+                break;
+            }
+        }
+
+        if (!needMtf) {
+            procBasedControls = VmcsRead(VMCS_CTRL_PROC_BASED);
+            procBasedControls &= ~CPU_MONITOR_TRAP;
+            VmcsWrite(VMCS_CTRL_PROC_BASED, procBasedControls);
+            TRACE("MTF disabled, all shadow views restored");
+        }
+    }
 }

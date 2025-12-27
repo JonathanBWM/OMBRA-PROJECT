@@ -138,15 +138,45 @@ VmresumeFailed:
     jmp VmresumeFailed
 
 Shutdown:
-    ; Graceful shutdown requested via VMCALL
-    ; TODO: Implement proper devirtualization
-    ;   1. Disable VMX on this CPU
-    ;   2. Restore original state
-    ;   3. Return to caller
-    ; For now, just halt
+    ; TODO: Proper VMXOFF shutdown sequence
+    ;
+    ; PROBLEM: Implementing proper devirtualization in assembly is complex because:
+    ; 1. Must read VMCS fields (RIP, RSP, RFLAGS, CS, SS) before VMXOFF
+    ; 2. Must restore ALL guest GPRs from VM-exit save frame
+    ; 3. Must build IRETQ frame with VMCS values
+    ; 4. All while managing multiple stack pointers and register conflicts
+    ;
+    ; CURRENT STATE: The C code properly marks CPUs as ShutdownPending.
+    ; The VMCALL handler returns VMEXIT_SHUTDOWN, bringing us here.
+    ;
+    ; PROPER IMPLEMENTATION requires:
+    ; - Using a per-CPU scratch area (not stack) to store VMCS values
+    ; - Careful register choreography to avoid clobbering
+    ; - Building IRETQ frame on guest stack: [SS][RSP][RFLAGS][CS][RIP]
+    ; - Executing: VMXOFF, clear CR4.VMXE, restore all regs, IRETQ
+    ;
+    ; WORKAROUND: For now, just execute VMXOFF and clear VMXE.
+    ; The CPU is devirtualized, but guest state may be inconsistent.
+    ; This prevents the hypervisor from running, meeting minimum requirements.
+
+    ; Execute VMXOFF to leave VMX operation
+    vmxoff
+
+    ; Clear CR4.VMXE (bit 13) to fully disable VMX
+    mov rax, cr4
+    and rax, NOT 2000h
+    mov cr4, rax
+
+    ; At this point, VMX is disabled on this CPU
+    ; However, we can't cleanly return to guest without implementing
+    ; the full register restoration and IRETQ sequence above.
+    ;
+    ; For development/testing: halt to indicate shutdown occurred
+    ; Production implementation should complete the devirtualization.
+
     cli
     hlt
-    jmp Shutdown
+    jmp $
 VmexitHandler ENDP
 
 ; =============================================================================

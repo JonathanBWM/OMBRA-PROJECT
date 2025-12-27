@@ -65,7 +65,8 @@ OMBRA_STATUS EptInitialize(
     void* pml4Virtual,
     U64 pml4Physical,
     void* pdptVirtual,
-    U64 pdptPhysical
+    U64 pdptPhysical,
+    U32 totalPagesAllocated
 ) {
     EPT_PML4E* pml4;
     EPT_PDPTE* pdpt;
@@ -76,6 +77,12 @@ OMBRA_STATUS EptInitialize(
 
     if (!ept || !pml4Virtual || !pdptVirtual) {
         ERR("EPT: Invalid parameters");
+        return OMBRA_ERROR_INVALID_PARAM;
+    }
+
+    // Validate total pages - must be at least 2 (PML4 + PDPT)
+    if (totalPagesAllocated < 2) {
+        ERR("EPT: totalPagesAllocated=%u too small (need >= 2)", totalPagesAllocated);
         return OMBRA_ERROR_INVALID_PARAM;
     }
 
@@ -95,6 +102,24 @@ OMBRA_STATUS EptInitialize(
     ept->PdptPhysical = pdptPhysical;
     ept->HookCount = 0;
     ept->Initialized = false;
+
+    // Initialize allocation tracking
+    // Assume PML4 is at offset 0, PDPT at offset 4KB in contiguous memory pool
+    ept->EptMemoryBase = pml4Virtual;
+    ept->EptMemoryPhysical = pml4Physical;
+    ept->TotalPagesAllocated = totalPagesAllocated;
+    ept->PagesUsed = 2;  // PML4 (page 0) + PDPT (page 1)
+    ept->SplitPdCount = 0;
+    ept->SplitPtCount = 0;
+
+    // Initialize split table arrays to NULL
+    for (i = 0; i < EPT_ENTRIES_PER_TABLE; i++) {
+        ept->SplitPdTables[i] = NULL;
+        ept->SplitPtTables[i] = NULL;
+    }
+
+    TRACE("EPT: Memory region = %u pages (%u KB), %u pages available for splits",
+          totalPagesAllocated, totalPagesAllocated * 4, totalPagesAllocated - 2);
 
     // Zero out tables
     pml4 = ept->Pml4;
@@ -153,6 +178,176 @@ OMBRA_STATUS EptInitialize(
     ept->Initialized = true;
 
     INFO("EPT: 512GB identity map created (EPTP=0x%llx)", ept->Eptp);
+    return OMBRA_SUCCESS;
+}
+
+// =============================================================================
+// EPT Memory Pool Management
+// =============================================================================
+
+// Allocate a new 4KB page from the EPT memory pool
+// Returns virtual and physical addresses via output parameters
+static OMBRA_STATUS EptAllocatePage(
+    EPT_STATE* ept,
+    void** outVirtual,
+    U64* outPhysical
+) {
+    U8* baseVirtual;
+    U64 offset;
+
+    if (!ept || !outVirtual || !outPhysical) {
+        return OMBRA_ERROR_INVALID_PARAM;
+    }
+
+    // Check if we have space
+    if (ept->PagesUsed >= ept->TotalPagesAllocated) {
+        ERR("EPT: Out of memory (used=%u, total=%u)",
+            ept->PagesUsed, ept->TotalPagesAllocated);
+        return OMBRA_ERROR_NO_MEMORY;
+    }
+
+    // Calculate offset into contiguous pool
+    baseVirtual = (U8*)ept->EptMemoryBase;
+    offset = ept->PagesUsed * EPT_PAGE_SIZE_4K;
+
+    *outVirtual = baseVirtual + offset;
+    *outPhysical = ept->EptMemoryPhysical + offset;
+
+    // Increment usage counter
+    ept->PagesUsed++;
+
+    TRACE("EPT: Allocated page %u at virt=%p phys=0x%llx",
+          ept->PagesUsed - 1, *outVirtual, *outPhysical);
+
+    return OMBRA_SUCCESS;
+}
+
+// Zero out a 4KB page
+static void EptZeroPage(void* page) {
+    U64* ptr = (U64*)page;
+    U32 i;
+
+    if (!page) {
+        return;
+    }
+
+    // Zero 512 x 8-byte entries (4KB total)
+    for (i = 0; i < EPT_ENTRIES_PER_TABLE; i++) {
+        ptr[i] = 0;
+    }
+}
+
+// =============================================================================
+// EPT Page Splitting - 1GB to 2MB
+// =============================================================================
+
+OMBRA_STATUS EptSplit1GbTo2Mb(EPT_STATE* ept, U64 guestPhysical) {
+    U32 pdptIndex;
+    EPT_PDPTE* pdpte;
+    EPT_PDE* pd;
+    void* pdVirtual;
+    U64 pdPhysical;
+    U64 base1GbPhysical;
+    U8 memoryType;
+    U32 i;
+    OMBRA_STATUS status;
+
+    if (!ept || !ept->Initialized) {
+        ERR("EPT: Invalid EPT state");
+        return OMBRA_ERROR_INVALID_PARAM;
+    }
+
+    // Get PDPT index from GPA
+    pdptIndex = EPT_PDPT_INDEX(guestPhysical);
+    if (pdptIndex >= EPT_ENTRIES_PER_TABLE) {
+        ERR("EPT: Invalid GPA 0x%llx (PDPT index %u out of range)",
+            guestPhysical, pdptIndex);
+        return OMBRA_ERROR_INVALID_PARAM;
+    }
+
+    pdpte = &ept->Pdpt[pdptIndex];
+
+    // Check if it's actually a 1GB large page
+    if (!pdpte->LargePage.LargePage) {
+        // Already split or points to PD table
+        TRACE("EPT: GPA 0x%llx already split (PDPT[%u] not a large page)",
+              guestPhysical, pdptIndex);
+        return OMBRA_SUCCESS;
+    }
+
+    // Check if we've already split this entry
+    if (ept->SplitPdTables[pdptIndex] != NULL) {
+        WARN("EPT: PDPT[%u] marked as large page but already has split PD table",
+             pdptIndex);
+        return OMBRA_SUCCESS;
+    }
+
+    INFO("EPT: Splitting 1GB page at PDPT[%u] (GPA 0x%llx) into 512 x 2MB pages",
+         pdptIndex, guestPhysical);
+
+    // Capture the 1GB page's properties before we overwrite the entry
+    base1GbPhysical = (U64)pdpte->LargePage.PagePhysAddr << 30;
+    memoryType = (U8)pdpte->LargePage.MemoryType;
+
+    TRACE("EPT: 1GB page base phys=0x%llx, memory type=%u",
+          base1GbPhysical, memoryType);
+
+    // Allocate a new PD table (4KB = 512 entries)
+    status = EptAllocatePage(ept, &pdVirtual, &pdPhysical);
+    if (status != OMBRA_SUCCESS) {
+        ERR("EPT: Failed to allocate PD table");
+        return status;
+    }
+
+    // Zero the new PD table
+    EptZeroPage(pdVirtual);
+
+    pd = (EPT_PDE*)pdVirtual;
+
+    // Fill PD with 512 x 2MB large page entries
+    // Each 2MB page inherits permissions and memory type from the 1GB page
+    for (i = 0; i < EPT_ENTRIES_PER_TABLE; i++) {
+        U64 page2MbPhysical = base1GbPhysical + ((U64)i * EPT_PAGE_SIZE_2M);
+
+        pd[i].Value = 0;
+
+        // Set permissions (copy from original 1GB page)
+        pd[i].LargePage.Read = pdpte->LargePage.Read;
+        pd[i].LargePage.Write = pdpte->LargePage.Write;
+        pd[i].LargePage.Execute = pdpte->LargePage.Execute;
+        pd[i].LargePage.ExecuteUser = pdpte->LargePage.ExecuteUser;
+
+        // Mark as 2MB large page
+        pd[i].LargePage.LargePage = 1;
+
+        // Set memory type
+        pd[i].LargePage.MemoryType = memoryType;
+
+        // Set physical address (bits 51:21)
+        pd[i].LargePage.PagePhysAddr = page2MbPhysical >> 21;
+    }
+
+    TRACE("EPT: Populated PD with 512 x 2MB entries (0x%llx - 0x%llx)",
+          base1GbPhysical, base1GbPhysical + EPT_PAGE_SIZE_1G - 1);
+
+    // Convert PDPTE from 1GB large page to PD pointer
+    pdpte->Value = 0;
+    pdpte->Pointer.Read = 1;
+    pdpte->Pointer.Write = 1;
+    pdpte->Pointer.Execute = 1;
+    pdpte->Pointer.ExecuteUser = 1;
+    pdpte->Pointer.PdPhysAddr = pdPhysical >> 12;
+
+    // Track the split PD table
+    ept->SplitPdTables[pdptIndex] = pdVirtual;
+    ept->SplitPdCount++;
+
+    INFO("EPT: Split complete - PDPT[%u] now points to PD at phys=0x%llx (split count=%u)",
+         pdptIndex, pdPhysical, ept->SplitPdCount);
+
+    // Invalidate EPT to ensure changes take effect
+    EptInvalidate(ept, INVEPT_TYPE_SINGLE_CONTEXT);
+
     return OMBRA_SUCCESS;
 }
 
@@ -223,18 +418,198 @@ OMBRA_STATUS EptModifyPage(
 }
 
 // =============================================================================
-// EPT Large Page Split (Stub for Phase 6)
+// EPT Page Splitting - 2MB to 4KB
+// =============================================================================
+
+OMBRA_STATUS EptSplit2MbTo4Kb(EPT_STATE* ept, U64 guestPhysical) {
+    U32 pml4Index, pdptIndex, pdIndex;
+    EPT_PML4E* pml4e;
+    EPT_PDPTE* pdpte;
+    EPT_PDE* pde;
+    EPT_PDE* pd;
+    EPT_PTE* pt;
+    void* ptVirtual;
+    U64 ptPhysical;
+    U64 base2MbPhysical;
+    U8 memoryType;
+    U32 i;
+    OMBRA_STATUS status;
+
+    if (!ept || !ept->Initialized) {
+        ERR("EPT: Invalid EPT state");
+        return OMBRA_ERROR_INVALID_PARAM;
+    }
+
+    // Get indices from GPA
+    pml4Index = EPT_PML4_INDEX(guestPhysical);
+    pdptIndex = EPT_PDPT_INDEX(guestPhysical);
+    pdIndex = EPT_PD_INDEX(guestPhysical);
+
+    TRACE("EPT: Splitting 2MB page at GPA 0x%llx (PML4[%u] PDPT[%u] PD[%u])",
+          guestPhysical, pml4Index, pdptIndex, pdIndex);
+
+    // Walk EPT to find the PDE
+    if (pml4Index >= EPT_ENTRIES_PER_TABLE) {
+        ERR("EPT: Invalid PML4 index %u", pml4Index);
+        return OMBRA_ERROR_INVALID_PARAM;
+    }
+
+    pml4e = &ept->Pml4[pml4Index];
+    if (!pml4e->Read) {
+        ERR("EPT: PML4E[%u] not present", pml4Index);
+        return OMBRA_ERROR_NOT_FOUND;
+    }
+
+    if (pdptIndex >= EPT_ENTRIES_PER_TABLE) {
+        ERR("EPT: Invalid PDPT index %u", pdptIndex);
+        return OMBRA_ERROR_INVALID_PARAM;
+    }
+
+    pdpte = &ept->Pdpt[pdptIndex];
+    if (!pdpte->Pointer.Read) {
+        ERR("EPT: PDPTE[%u] not present", pdptIndex);
+        return OMBRA_ERROR_NOT_FOUND;
+    }
+
+    // Check if this is a 1GB page that needs splitting first
+    if (pdpte->LargePage.LargePage) {
+        ERR("EPT: Cannot split 2MB - PDPTE[%u] is 1GB page, split to 2MB first", pdptIndex);
+        return OMBRA_ERROR_INVALID_STATE;
+    }
+
+    // Get the PD table (must have been split from 1GB already)
+    pd = (EPT_PDE*)ept->SplitPdTables[pdptIndex];
+    if (!pd) {
+        ERR("EPT: PD table for PDPTE[%u] not found in split tracking", pdptIndex);
+        return OMBRA_ERROR_INVALID_STATE;
+    }
+
+    if (pdIndex >= EPT_ENTRIES_PER_TABLE) {
+        ERR("EPT: Invalid PD index %u", pdIndex);
+        return OMBRA_ERROR_INVALID_PARAM;
+    }
+
+    pde = &pd[pdIndex];
+    if (!pde->LargePage.Read) {
+        ERR("EPT: PDE[%u] not present", pdIndex);
+        return OMBRA_ERROR_NOT_FOUND;
+    }
+
+    // Check if already a 4KB page
+    if (!pde->LargePage.LargePage) {
+        TRACE("EPT: PDE[%u] is already split to 4KB pages", pdIndex);
+        return OMBRA_SUCCESS;  // Already done
+    }
+
+    INFO("EPT: Splitting 2MB page at PD[%u] (GPA 0x%llx) into 512 x 4KB pages",
+         pdIndex, guestPhysical);
+
+    // Capture the 2MB page's properties before we overwrite the entry
+    base2MbPhysical = (U64)pde->LargePage.PagePhysAddr << 21;
+    memoryType = (U8)pde->LargePage.MemoryType;
+
+    TRACE("EPT: 2MB page base phys=0x%llx, memory type=%u",
+          base2MbPhysical, memoryType);
+
+    // Allocate PT for 4KB pages
+    status = EptAllocatePage(ept, &ptVirtual, &ptPhysical);
+    if (status != OMBRA_SUCCESS) {
+        ERR("EPT: Failed to allocate PT for 2MB split");
+        return status;
+    }
+
+    // Zero the new PT table
+    EptZeroPage(ptVirtual);
+
+    pt = (EPT_PTE*)ptVirtual;
+
+    // Fill PT with 512 × 4KB entries
+    // Each 4KB page inherits permissions and memory type from the 2MB page
+    for (i = 0; i < EPT_ENTRIES_PER_TABLE; i++) {
+        U64 page4KbPhysical = base2MbPhysical + ((U64)i * EPT_PAGE_SIZE_4K);
+
+        pt[i].Value = 0;
+
+        // Set permissions (copy from original 2MB page)
+        pt[i].Read = pde->LargePage.Read;
+        pt[i].Write = pde->LargePage.Write;
+        pt[i].Execute = pde->LargePage.Execute;
+        pt[i].ExecuteUser = pde->LargePage.ExecuteUser;
+
+        // Set memory type
+        pt[i].MemoryType = memoryType;
+
+        // Set physical address (bits 51:12)
+        pt[i].PagePhysAddr = page4KbPhysical >> 12;
+    }
+
+    TRACE("EPT: Populated PT with 512 x 4KB entries (0x%llx - 0x%llx)",
+          base2MbPhysical, base2MbPhysical + EPT_PAGE_SIZE_2M - 1);
+
+    // Convert PDE from large page to PT pointer
+    pde->Value = 0;
+    pde->Pointer.Read = 1;
+    pde->Pointer.Write = 1;
+    pde->Pointer.Execute = 1;
+    pde->Pointer.ExecuteUser = 1;
+    pde->Pointer.PtPhysAddr = ptPhysical >> 12;
+    // Note: LargePage bit is now 0 (not a large page anymore)
+
+    ept->SplitPtCount++;
+
+    INFO("EPT: Split complete - PD[%u] now points to PT at phys=0x%llx (split count=%u)",
+         pdIndex, ptPhysical, ept->SplitPtCount);
+
+    // Invalidate EPT to ensure changes take effect
+    EptInvalidate(ept, INVEPT_TYPE_SINGLE_CONTEXT);
+
+    return OMBRA_SUCCESS;
+}
+
+// =============================================================================
+// Generic EPT Large Page Split
 // =============================================================================
 
 OMBRA_STATUS EptSplitLargePage(EPT_STATE* ept, U64 guestPhysical) {
-    (void)ept;
-    (void)guestPhysical;
+    U32 pml4Index, pdptIndex;
+    EPT_PDPTE* pdpte;
+    OMBRA_STATUS status;
 
-    // This would split a 1GB page into 512 x 2MB pages
-    // or a 2MB page into 512 x 4KB pages
-    // Required for fine-grained EPT hooks
+    if (!ept || !ept->Initialized) {
+        return OMBRA_ERROR_INVALID_PARAM;
+    }
 
-    return OMBRA_ERROR_NOT_IMPLEMENTED;
+    pml4Index = EPT_PML4_INDEX(guestPhysical);
+    pdptIndex = EPT_PDPT_INDEX(guestPhysical);
+
+    // Currently only PML4 entry 0 is valid (512GB)
+    if (pml4Index != 0) {
+        ERR("EPT: GPA 0x%llx outside mapped range", guestPhysical);
+        return OMBRA_ERROR_INVALID_PARAM;
+    }
+
+    if (pdptIndex >= EPT_ENTRIES_PER_TABLE) {
+        return OMBRA_ERROR_INVALID_PARAM;
+    }
+
+    pdpte = &ept->Pdpt[pdptIndex];
+
+    // Determine what kind of page we're splitting
+    if (pdpte->LargePage.LargePage) {
+        // 1GB page - split to 2MB first, then to 4KB
+        INFO("EPT: Splitting 1GB page at GPA 0x%llx to 2MB, then to 4KB", guestPhysical);
+
+        status = EptSplit1GbTo2Mb(ept, guestPhysical);
+        if (OMBRA_FAILED(status)) {
+            return status;
+        }
+
+        // After splitting to 2MB, split the specific 2MB page to 4KB
+        return EptSplit2MbTo4Kb(ept, guestPhysical);
+    } else {
+        // Already split to 2MB (or smaller), split the specific 2MB page to 4KB
+        return EptSplit2MbTo4Kb(ept, guestPhysical);
+    }
 }
 
 // =============================================================================

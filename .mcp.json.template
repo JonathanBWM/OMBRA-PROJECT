@@ -1,0 +1,15 @@
+{
+  "mcpServers": {
+    "ombra": {
+      "type": "stdio",
+      "command": "${PROJECT_ROOT}/ombra_mcp_server/.venv/bin/python",
+      "args": ["-m", "ombra_mcp.server"],
+      "cwd": "${PROJECT_ROOT}/ombra_mcp_server/src",
+      "env": {
+        "PYTHONPATH": "${PROJECT_ROOT}/ombra_mcp_server/src",
+        "OMBRA_PROJECT_ROOT": "${PROJECT_ROOT}"
+      }
+    }
+  },
+  "_comment": "Copy this file to .mcp.json and replace ${PROJECT_ROOT} with your actual project path"
+}

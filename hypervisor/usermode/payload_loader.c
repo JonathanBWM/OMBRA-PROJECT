@@ -1,7 +1,7 @@
-// payload_loader.c — Hypervisor Payload Loader Implementation
-// OmbraHypervisor
+// payload_loader.c — Payload Loader Implementation
 
 #include "payload_loader.h"
+#include "obfuscate.h"
 #include <stdio.h>
 #include <string.h>
 
@@ -170,22 +170,22 @@ bool HvCopyPayload(HV_CONTEXT* ctx, const void* payload, size_t size) {
     // Calculate pages needed (round up)
     uint32_t pages = (uint32_t)((size + 4095) / 4096);
 
-    printf("[*] Copying hypervisor payload (%zu bytes, %u pages)\n", size, pages);
+    DBG_PRINTF("[*] Copying payload (%zu bytes, %u pages)\n", size, pages);
 
     // Allocate with both R3 and R0 mappings
-    if (DrvAllocPages(&ctx->Driver, pages, true, &ctx->HypervisorCode) != DRV_SUCCESS) {
-        printf("[-] Failed to allocate hypervisor code region\n");
+    if (DrvAllocPages(&ctx->Driver, pages, true, &ctx->PayloadCode) != DRV_SUCCESS) {
+        printf("[-] Failed to allocate code region\n");
         return false;
     }
 
     // Copy payload via R3 mapping
-    memcpy(ctx->HypervisorCode.R3, payload, size);
+    memcpy(ctx->PayloadCode.R3, payload, size);
 
-    // Entry point is at offset 0 (OmbraInitialize should be first)
-    ctx->EntryPoint = ctx->HypervisorCode.R0;
+    // Entry point is at offset 0
+    ctx->EntryPoint = ctx->PayloadCode.R0;
 
-    printf("[+] Hypervisor code at R0=%p (entry=%p)\n",
-           ctx->HypervisorCode.R0, ctx->EntryPoint);
+    DBG_PRINTF("[+] Code at R0=%p (entry=%p)\n",
+           ctx->PayloadCode.R0, ctx->EntryPoint);
 
     return true;
 }
@@ -195,7 +195,8 @@ bool HvCopyPayload(HV_CONTEXT* ctx, const void* payload, size_t size) {
 // =============================================================================
 
 // Structure passed to hypervisor entry point
-typedef struct _HV_INIT_DATA {
+// Must match HV_INIT_PARAMS in hypervisor/vmx.h
+typedef struct _HV_INIT_PARAMS {
     uint32_t    CpuId;
     uint32_t    TotalCpus;
 
@@ -205,16 +206,26 @@ typedef struct _HV_INIT_DATA {
     uint64_t    HostStackTop;       // R0 address of stack TOP (stack grows down)
     uint64_t    MsrBitmapPhysical;
 
-    // Shared physical addresses
-    uint64_t    EptPml4Physical;
+    // Virtual addresses for R0 access
+    void*       VmxonVirtual;
+    void*       VmcsVirtual;
+    void*       MsrBitmapVirtual;
 
-    // VMX MSR values (pre-fetched from driver)
+    // Shared EPT
+    uint64_t    EptPml4Physical;
+    void*       EptPml4Virtual;
+
+    // VMX MSRs (pre-fetched from driver)
     uint64_t    VmxBasic;
     uint64_t    VmxPinCtls;
     uint64_t    VmxProcCtls;
     uint64_t    VmxProcCtls2;
     uint64_t    VmxExitCtls;
     uint64_t    VmxEntryCtls;
+    uint64_t    VmxTruePin;
+    uint64_t    VmxTrueProc;
+    uint64_t    VmxTrueExit;
+    uint64_t    VmxTrueEntry;
     uint64_t    VmxCr0Fixed0;
     uint64_t    VmxCr0Fixed1;
     uint64_t    VmxCr4Fixed0;
@@ -226,13 +237,14 @@ typedef struct _HV_INIT_DATA {
 
     // Debug infrastructure
     uint64_t    DebugBufferPhysical;
+    void*       DebugBufferVirtual;
     uint64_t    DebugBufferSize;
-} HV_INIT_DATA;
+} HV_INIT_PARAMS;
 
 bool HvLaunchOnCpu(HV_CONTEXT* ctx, uint32_t cpuId) {
     CPU_CONTEXT* cpu = &ctx->Cpus[cpuId];
 
-    printf("[*] Launching hypervisor on CPU %u\n", cpuId);
+    DBG_PRINTF("[*] Launching on CPU %u\n", cpuId);
 
     // Prepare initialization data
     // This would need to be copied to a kernel-accessible location
@@ -255,18 +267,18 @@ bool HvLaunchOnCpu(HV_CONTEXT* ctx, uint32_t cpuId) {
     }
 
     if (result != 0) {
-        printf("[-] Hypervisor init failed on CPU %u: error %d\n", cpuId, result);
+        printf("[-] Init failed on CPU %u: error %d\n", cpuId, result);
         return false;
     }
 
     cpu->Virtualized = true;
-    printf("[+] CPU %u virtualized\n", cpuId);
+    DBG_PRINTF("[+] CPU %u active\n", cpuId);
 
     return true;
 }
 
 bool HvLaunchAll(HV_CONTEXT* ctx) {
-    printf("[*] Launching hypervisor on all %u CPUs\n", ctx->NumCpus);
+    DBG_PRINTF("[*] Launching on all %u CPUs\n", ctx->NumCpus);
 
     // Launch on CPU 0 first (single-CPU debugging is easier)
     if (!HvLaunchOnCpu(ctx, 0)) {
@@ -293,7 +305,7 @@ bool HvLaunchAll(HV_CONTEXT* ctx) {
 bool HvLoad(HV_CONTEXT* ctx, const wchar_t* driverPath, const void* payload, size_t payloadSize) {
     memset(ctx, 0, sizeof(*ctx));
 
-    printf("[*] Initializing OmbraHypervisor\n");
+    DBG_PRINTF("[*] Initializing %s\n", DEC_LOADER_TITLE());
 
     // Step 1: Initialize driver interface
     printf("[*] Loading vulnerable driver\n");
@@ -343,9 +355,9 @@ bool HvLoad(HV_CONTEXT* ctx, const wchar_t* driverPath, const void* payload, siz
         return false;
     }
 
-    // Step 7: Copy hypervisor payload
+    // Step 7: Copy payload
     if (!HvCopyPayload(ctx, payload, payloadSize)) {
-        printf("[-] Failed to copy hypervisor payload\n");
+        printf("[-] Failed to copy payload\n");
         DrvFreeContiguous(&ctx->Driver, &ctx->DebugBuffer);
         DrvFreeContiguous(&ctx->Driver, &ctx->EptTables);
         HvFreePerCpu(ctx);
@@ -355,31 +367,31 @@ bool HvLoad(HV_CONTEXT* ctx, const wchar_t* driverPath, const void* payload, siz
 
     ctx->Loaded = true;
 
-    // Step 8: Launch hypervisor
+    // Step 8: Launch
     if (!HvLaunchAll(ctx)) {
-        printf("[-] Failed to launch hypervisor\n");
+        printf("[-] Failed to launch\n");
         // Continue - we might have partial success
     }
 
-    printf("[+] OmbraHypervisor loaded\n");
+    DBG_PRINTF("[+] %s loaded\n", DEC_LOADER_TITLE());
     return true;
 }
 
 bool HvUnload(HV_CONTEXT* ctx) {
-    printf("[*] Unloading OmbraHypervisor\n");
+    DBG_PRINTF("[*] Unloading\n");
 
     // TODO: Send VMCALL to each CPU to trigger VMXOFF
     // For now, just clean up memory
 
     if (ctx->Running) {
         // Signal shutdown via VMCALL
-        printf("[*] Signaling hypervisor shutdown\n");
+        DBG_PRINTF("[*] Signaling shutdown\n");
         // TODO: Implement VMCALL-based shutdown
     }
 
     // Free allocations
-    if (ctx->HypervisorCode.R3) {
-        DrvFreePages(&ctx->Driver, &ctx->HypervisorCode);
+    if (ctx->PayloadCode.R3) {
+        DrvFreePages(&ctx->Driver, &ctx->PayloadCode);
     }
 
     if (ctx->EptTables.R3) {
@@ -396,7 +408,7 @@ bool HvUnload(HV_CONTEXT* ctx) {
     DrvCleanup(&ctx->Driver);
 
     memset(ctx, 0, sizeof(*ctx));
-    printf("[+] Hypervisor unloaded\n");
+    DBG_PRINTF("[+] Unloaded\n");
 
     return true;
 }
@@ -404,7 +416,7 @@ bool HvUnload(HV_CONTEXT* ctx) {
 bool HvIsRunning(HV_CONTEXT* ctx) {
     if (!ctx->Running) return false;
 
-    // TODO: Execute VMCALL to verify hypervisor responds
+    // TODO: Execute VMCALL to verify payload responds
     // VMCALL_PING with magic prefix
 
     return ctx->Running;

@@ -1,0 +1,358 @@
+{
+  "overview": "Windows Hyper-V enlightenments are CPUID leaves 0x40000000-0x4000000F that provide optimization hints to Windows guests. CRITICAL: Do NOT zero these leaves or Windows will experience severe performance degradation or crashes.",
+
+  "cpuid_leaves": {
+    "0x40000000": {
+      "name": "Hypervisor Vendor ID",
+      "eax": "Maximum hypervisor CPUID leaf (should be >= 0x40000005 for Windows)",
+      "ebx_ecx_edx": "Vendor signature string (12 characters)",
+      "common_signatures": {
+        "Microsoft Hv": "Microsoft Hyper-V",
+        "VMwareVMware": "VMware",
+        "KVMKVMKVM": "KVM",
+        "XenVMMXenVMM": "Xen"
+      },
+      "evasion": "Zero EBX/ECX/EDX to hide vendor, but PRESERVE EAX for max leaf",
+      "safe_to_modify": "PARTIAL - Can modify vendor string (EBX/ECX/EDX) but MUST preserve EAX"
+    },
+    "0x40000001": {
+      "name": "Hypervisor Interface Identification",
+      "eax": "Interface signature - 'Hv#1' for Hyper-V compatible",
+      "warning": "DO NOT MODIFY - Windows uses this to enable enlightenments",
+      "safe_to_modify": "NO - Critical for Windows compatibility"
+    },
+    "0x40000002": {
+      "name": "Hypervisor System Identity",
+      "eax": "Build number",
+      "ebx": "Major/Minor version",
+      "ecx": "Service pack",
+      "edx": "Service branch/number",
+      "warning": "DO NOT MODIFY - Windows may check version compatibility",
+      "safe_to_modify": "NO - May break version-dependent features"
+    },
+    "0x40000003": {
+      "name": "Hypervisor Feature Identification",
+      "eax_bits": {
+        "0": "VP Runtime MSR (HV_X64_MSR_VP_RUNTIME)",
+        "1": "Partition Reference Counter",
+        "2": "Basic SynIC MSRs",
+        "3": "Synthetic Timer MSRs",
+        "4": "APIC access MSRs",
+        "5": "Hypercall MSRs",
+        "6": "VP Index MSR",
+        "7": "Virtualization system reset MSR",
+        "8": "Statistics pages MSR",
+        "9": "Partition reference TSC",
+        "10": "Guest idle MSR",
+        "11": "Timer frequency MSRs",
+        "12": "Debug MSRs"
+      },
+      "ebx_bits": {
+        "0": "CreatePartitions",
+        "1": "AccessPartitionId",
+        "2": "AccessMemoryPool",
+        "3": "AdjustMessageBuffers",
+        "4": "PostMessages",
+        "5": "SignalEvents",
+        "6": "CreatePort",
+        "7": "ConnectPort",
+        "8": "AccessStats"
+      },
+      "warning": "CRITICAL - Modifying breaks Hyper-V enlightenments",
+      "safe_to_modify": "NO - Disabling features causes crashes/BSOD"
+    },
+    "0x40000004": {
+      "name": "Implementation Recommendations",
+      "eax_bits": {
+        "0": "Recommend hypercall for address space switch",
+        "1": "Recommend hypercall for local TLB flush",
+        "2": "Recommend hypercall for remote TLB flush",
+        "3": "Recommend MSR for APIC EOI/TPR/ICR access",
+        "4": "Recommend MSR for system reset",
+        "5": "Recommend relaxed timing",
+        "6": "Recommend DMA remapping",
+        "7": "Recommend interrupt remapping",
+        "8": "Recommend x2APIC MSRs",
+        "9": "Recommend deprecating AutoEOI",
+        "10": "Recommend SyntheticClusterIpi hypercall",
+        "11": "Recommend ExProcessorMasks",
+        "12": "Recommend nested Hyper-V",
+        "13": "Recommend INT for MBEC syscalls",
+        "14": "Recommend nested Enlightened VMCS",
+        "17": "Recommend using hypervisor for sync fence",
+        "18": "Recommend relaxed VA/PA limit handling"
+      },
+      "warning": "Modifying these will cause Windows to use slower code paths",
+      "safe_to_modify": "RISKY - Performance degradation but not crashes"
+    },
+    "0x40000005": {
+      "name": "Hypervisor Limits",
+      "eax": "Maximum virtual processors",
+      "ebx": "Maximum logical processors",
+      "ecx": "Maximum physical interrupt vectors",
+      "warning": "DO NOT MODIFY - Windows uses for resource allocation",
+      "safe_to_modify": "NO - Can cause resource exhaustion/crashes"
+    },
+    "0x40000006": {
+      "name": "Implementation Hardware Features",
+      "eax_bits": {
+        "0": "APIC overlay assist",
+        "1": "MSR bitmaps",
+        "2": "Architectural performance counters",
+        "3": "Second level address translation",
+        "4": "DMA remapping",
+        "5": "Interrupt remapping",
+        "6": "Memory patrol scrubber",
+        "7": "DMA protection",
+        "8": "HPET required",
+        "9": "Volatile synthetic timers"
+      },
+      "safe_to_modify": "RISKY - May break hardware-dependent features"
+    },
+    "0x40000007": {
+      "name": "CPU Management Features",
+      "description": "Reserved for future use",
+      "safe_to_modify": "YES - Currently unused by Windows"
+    },
+    "0x40000008": {
+      "name": "SVM Features (AMD-specific)",
+      "description": "AMD SVM enlightenments",
+      "safe_to_modify": "PLATFORM_DEPENDENT - Only on AMD"
+    },
+    "0x40000009": {
+      "name": "Nested Virtualization Features",
+      "description": "Features for nested hypervisors",
+      "safe_to_modify": "RISKY - If nested virtualization is used"
+    },
+    "0x4000000A": {
+      "name": "Extended Hypervisor Features",
+      "description": "Additional feature flags",
+      "safe_to_modify": "UNKNOWN - Depends on Windows version"
+    }
+  },
+
+  "hyper_v_msrs": {
+    "HV_X64_MSR_GUEST_OS_ID": {
+      "address": "0x40000000",
+      "description": "Guest OS identity - Windows writes this on boot",
+      "access": "READ/WRITE",
+      "critical": true
+    },
+    "HV_X64_MSR_HYPERCALL": {
+      "address": "0x40000001",
+      "description": "Hypercall page enable and address",
+      "access": "READ/WRITE",
+      "critical": true
+    },
+    "HV_X64_MSR_VP_INDEX": {
+      "address": "0x40000002",
+      "description": "Virtual processor index",
+      "access": "READ",
+      "critical": true
+    },
+    "HV_X64_MSR_RESET": {
+      "address": "0x40000003",
+      "description": "System reset",
+      "access": "READ/WRITE",
+      "critical": true
+    },
+    "HV_X64_MSR_VP_RUNTIME": {
+      "address": "0x40000010",
+      "description": "VP runtime (100ns units)",
+      "access": "READ",
+      "critical": false
+    },
+    "HV_X64_MSR_TIME_REF_COUNT": {
+      "address": "0x40000020",
+      "description": "Partition reference time",
+      "access": "READ",
+      "critical": true
+    },
+    "HV_X64_MSR_REFERENCE_TSC": {
+      "address": "0x40000021",
+      "description": "Reference TSC page (CRITICAL for timing)",
+      "access": "READ/WRITE",
+      "critical": true,
+      "note": "Used for QueryPerformanceCounter - MUST be accurate"
+    },
+    "HV_X64_MSR_TSC_FREQUENCY": {
+      "address": "0x40000022",
+      "description": "TSC frequency in Hz",
+      "access": "READ",
+      "critical": true
+    },
+    "HV_X64_MSR_APIC_FREQUENCY": {
+      "address": "0x40000023",
+      "description": "APIC frequency in Hz",
+      "access": "READ",
+      "critical": true
+    },
+    "HV_X64_MSR_EOI": {
+      "address": "0x40000070",
+      "description": "End of interrupt (synthetic APIC)",
+      "access": "WRITE",
+      "critical": false
+    },
+    "HV_X64_MSR_ICR": {
+      "address": "0x40000071",
+      "description": "Interrupt command register (synthetic APIC)",
+      "access": "READ/WRITE",
+      "critical": false
+    },
+    "HV_X64_MSR_TPR": {
+      "address": "0x40000072",
+      "description": "Task priority register (synthetic APIC)",
+      "access": "READ/WRITE",
+      "critical": false
+    },
+    "HV_X64_MSR_APIC_ASSIST_PAGE": {
+      "address": "0x40000073",
+      "description": "APIC assist page",
+      "access": "READ/WRITE",
+      "critical": false
+    },
+    "HV_X64_MSR_SCONTROL": {
+      "address": "0x40000080",
+      "description": "SynIC control",
+      "access": "READ/WRITE",
+      "critical": false
+    },
+    "HV_X64_MSR_SVERSION": {
+      "address": "0x40000081",
+      "description": "SynIC version",
+      "access": "READ",
+      "critical": false
+    },
+    "HV_X64_MSR_SIEFP": {
+      "address": "0x40000082",
+      "description": "SynIC event flags page",
+      "access": "READ/WRITE",
+      "critical": false
+    },
+    "HV_X64_MSR_SIMP": {
+      "address": "0x40000083",
+      "description": "SynIC message page",
+      "access": "READ/WRITE",
+      "critical": false
+    },
+    "HV_X64_MSR_EOM": {
+      "address": "0x40000084",
+      "description": "End of message",
+      "access": "WRITE",
+      "critical": false
+    },
+    "HV_X64_MSR_SINT0": {
+      "address": "0x40000090",
+      "description": "SynIC timer 0",
+      "access": "READ/WRITE",
+      "critical": false
+    },
+    "HV_X64_MSR_SINT1": {
+      "address": "0x40000091",
+      "description": "SynIC timer 1",
+      "access": "READ/WRITE",
+      "critical": false
+    },
+    "HV_X64_MSR_STIMER0_CONFIG": {
+      "address": "0x400000B0",
+      "description": "Synthetic timer 0 config",
+      "access": "READ/WRITE",
+      "critical": false
+    },
+    "HV_X64_MSR_STIMER0_COUNT": {
+      "address": "0x400000B1",
+      "description": "Synthetic timer 0 count",
+      "access": "READ/WRITE",
+      "critical": false
+    }
+  },
+
+  "safe_evasion_strategy": {
+    "0x40000000": "Zero EBX/ECX/EDX (vendor string), KEEP EAX (max leaf)",
+    "0x40000001-0x4000000F": "PASS THROUGH UNCHANGED",
+    "approach": "If running nested under Hyper-V, preserve all enlightenments. Only modify leaf 0x40000000 vendor string.",
+    "recommended_vendor": "Use null string (all zeros) instead of fake vendor to avoid fingerprinting"
+  },
+
+  "dangerous_modifications": [
+    "Zeroing EAX of 0x40000000 - Windows won't query other leaves",
+    "Modifying 0x40000003 - Breaks SynIC, timers, hypercalls",
+    "Modifying 0x40000004 - Forces Windows into slow paths",
+    "Zeroing 0x40000006 - Hides hardware features Windows expects",
+    "Blocking HV_X64_MSR_GUEST_OS_ID writes - Prevents enlightenment initialization",
+    "Blocking HV_X64_MSR_HYPERCALL - Breaks all hypercall functionality",
+    "Inaccurate HV_X64_MSR_REFERENCE_TSC - Causes time drift and QueryPerformanceCounter issues"
+  ],
+
+  "windows_symptoms": {
+    "missing_enlightenments": [
+      "Extreme slowness (10-100x slower)",
+      "High CPU usage in idle",
+      "Timer drift",
+      "Network performance degradation",
+      "BSOD: HYPERVISOR_ERROR (0x00020001)"
+    ],
+    "broken_timing": [
+      "QueryPerformanceCounter returning incorrect values",
+      "Sleep() functions not working correctly",
+      "Multimedia timers failing",
+      "Game/application stuttering"
+    ],
+    "broken_hypercalls": [
+      "TLB flush taking milliseconds instead of microseconds",
+      "Context switch overhead 100x normal",
+      "BSOD during high load"
+    ]
+  },
+
+  "detection_risks": {
+    "cpuid_leaf_0x40000000": {
+      "risk_level": "LOW",
+      "detection_method": "Checking for hypervisor vendor string",
+      "mitigation": "Return zeros for vendor string, preserve max leaf in EAX"
+    },
+    "cpuid_leaf_0x40000001": {
+      "risk_level": "CRITICAL",
+      "detection_method": "Absence causes Windows to disable enlightenments",
+      "mitigation": "DO NOT MODIFY - Required for Windows functionality"
+    },
+    "missing_msrs": {
+      "risk_level": "HIGH",
+      "detection_method": "GP fault on MSR access indicates no enlightenments",
+      "mitigation": "Virtualize all HV_X64_MSR_* MSRs, even if returning dummy values"
+    }
+  },
+
+  "implementation_notes": {
+    "minimal_viable_set": [
+      "CPUID 0x40000000-0x40000005 (with vendor string zeroed)",
+      "HV_X64_MSR_GUEST_OS_ID (storage only)",
+      "HV_X64_MSR_HYPERCALL (storage only, hypercalls can fail)",
+      "HV_X64_MSR_VP_INDEX (return CPU index)",
+      "HV_X64_MSR_TIME_REF_COUNT (return TSC / 10)",
+      "HV_X64_MSR_REFERENCE_TSC (point to page with TSC data)",
+      "HV_X64_MSR_TSC_FREQUENCY (return actual TSC freq)",
+      "HV_X64_MSR_APIC_FREQUENCY (return APIC freq)"
+    ],
+    "optional_but_recommended": [
+      "HV_X64_MSR_VP_RUNTIME (CPU time for this VP)",
+      "Synthetic timer MSRs (if SynIC is advertised)",
+      "APIC assist page (for EOI optimization)"
+    ],
+    "can_skip": [
+      "SynIC MSRs (unless advertising SynIC support)",
+      "Debug MSRs",
+      "Statistics MSRs"
+    ]
+  },
+
+  "references": {
+    "tlfs": "Hypervisor Top-Level Functional Specification",
+    "url": "https://learn.microsoft.com/en-us/virtualization/hyper-v-on-windows/tlfs/tlfs",
+    "critical_sections": [
+      "Chapter 2: Hypervisor CPUID Interface",
+      "Chapter 3: Hypercall Interface",
+      "Chapter 4: Virtual Processor Registers"
+    ]
+  }
+}

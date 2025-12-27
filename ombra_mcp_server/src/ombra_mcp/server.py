@@ -22,7 +22,7 @@ from typing import Any, Dict
 
 from mcp.server import Server, InitializationOptions
 from mcp.server.stdio import stdio_server
-from mcp.types import Tool, TextContent, ServerCapabilities
+from mcp.types import Tool, TextContent, ServerCapabilities, ToolsCapability
 
 # Import advanced tools
 from .tools import (
@@ -64,6 +64,7 @@ from .tools import (
     get_findings,
     dismiss_finding,
     get_suggestions,
+    get_priority_work,
     get_component,
     get_exit_handler_status,
     add_decision,
@@ -75,6 +76,18 @@ from .tools import (
     save_session_context,
     refresh_analysis,
     get_daemon_status,
+    seed_components,
+)
+
+# Import Concept Intelligence System tools
+from .tools.concepts import (
+    get_concept,
+    list_concepts,
+    check_concept_coverage,
+    get_implementation_gaps,
+    suggest_next_work,
+    verify_concept,
+    dismiss_concept_finding,
 )
 
 # Server instance
@@ -1314,12 +1327,16 @@ TOOLS = [
         },
         "required": ["finding_id"]
     }),
-    Tool(name="get_suggestions", description="Get pending suggestions for what to work on next", inputSchema={
+    Tool(name="get_suggestions", description="Get actionable suggestions for what to work on next - intelligently analyzes findings and generates prioritized tasks with file locations", inputSchema={
         "type": "object",
         "properties": {
-            "priority": {"type": "string", "enum": ["high", "medium", "low"], "description": "Filter by priority"},
+            "priority": {"type": "string", "enum": ["critical", "high", "medium", "low"], "description": "Filter by priority"},
             "limit": {"type": "integer", "description": "Maximum suggestions to return", "default": 10}
         },
+    }),
+    Tool(name="get_priority_work", description="Get the single most important thing to work on right now - returns focused task with specific locations and success criteria", inputSchema={
+        "type": "object",
+        "properties": {},
     }),
     Tool(name="get_component", description="Get details on a specific hypervisor component", inputSchema={
         "type": "object",
@@ -1387,6 +1404,54 @@ TOOLS = [
     Tool(name="get_daemon_status", description="Get status of the watcher daemon (running state, last scan time, findings)", inputSchema={
         "type": "object", "properties": {}
     }),
+    Tool(name="seed_components", description="Seed components and exit_handlers tables with current hypervisor status", inputSchema={
+        "type": "object", "properties": {}
+    }),
+
+    # Concept Intelligence System
+    Tool(name="get_concept", description="Get full details on a specific concept including SDM cross-references", inputSchema={
+        "type": "object",
+        "properties": {"concept_id": {"type": "string", "description": "Concept identifier (e.g., TSC_OFFSET_COMPENSATION)"}},
+        "required": ["concept_id"]
+    }),
+    Tool(name="list_concepts", description="List concepts with optional filtering", inputSchema={
+        "type": "object",
+        "properties": {
+            "category": {"type": "string", "enum": ["timing", "vmx", "ept", "stealth"], "description": "Filter by category"},
+            "status": {"type": "string", "enum": ["not_started", "partial", "complete", "verified"], "description": "Filter by implementation status"},
+            "priority": {"type": "string", "enum": ["critical", "high", "medium", "low"], "description": "Filter by priority"}
+        }
+    }),
+    Tool(name="check_concept_coverage", description="Deep analysis of a concept's implementation with gap report", inputSchema={
+        "type": "object",
+        "properties": {"concept_id": {"type": "string", "description": "Concept to analyze"}},
+        "required": ["concept_id"]
+    }),
+    Tool(name="get_implementation_gaps", description="Get list of missing or partial concept implementations sorted by priority", inputSchema={
+        "type": "object",
+        "properties": {"category": {"type": "string", "enum": ["timing", "vmx", "ept", "stealth"], "description": "Optional filter by category"}}
+    }),
+    Tool(name="suggest_next_work", description="Suggest what to implement next based on dependencies and priorities", inputSchema={
+        "type": "object", "properties": {}
+    }),
+    Tool(name="verify_concept", description="Mark a concept as verified at a specific location (human verification overrides pattern detection)", inputSchema={
+        "type": "object",
+        "properties": {
+            "concept_id": {"type": "string", "description": "Concept being verified"},
+            "file_path": {"type": "string", "description": "File where implementation exists"},
+            "line_number": {"type": "integer", "description": "Line number of implementation"},
+            "notes": {"type": "string", "description": "Optional notes about the implementation"}
+        },
+        "required": ["concept_id", "file_path", "line_number"]
+    }),
+    Tool(name="dismiss_concept_finding", description="Dismiss a concept finding as false positive", inputSchema={
+        "type": "object",
+        "properties": {
+            "finding_id": {"type": "integer", "description": "ID of the finding to dismiss"},
+            "reason": {"type": "string", "description": "Optional reason for dismissal"}
+        },
+        "required": ["finding_id"]
+    }),
 ]
 
 TOOL_HANDLERS = {
@@ -1448,6 +1513,7 @@ TOOL_HANDLERS = {
     "get_findings": get_findings,
     "dismiss_finding": dismiss_finding,
     "get_suggestions": get_suggestions,
+    "get_priority_work": get_priority_work,
     "get_component": get_component,
     "get_exit_handler_status": get_exit_handler_status,
     "add_decision": add_decision,
@@ -1459,6 +1525,15 @@ TOOL_HANDLERS = {
     "save_session_context": save_session_context,
     "refresh_analysis": refresh_analysis,
     "get_daemon_status": get_daemon_status,
+    "seed_components": seed_components,
+    # Concept Intelligence System
+    "get_concept": get_concept,
+    "list_concepts": list_concepts,
+    "check_concept_coverage": check_concept_coverage,
+    "get_implementation_gaps": get_implementation_gaps,
+    "suggest_next_work": suggest_next_work,
+    "verify_concept": verify_concept,
+    "dismiss_concept_finding": dismiss_concept_finding,
 }
 
 @app.list_tools()
@@ -1486,7 +1561,7 @@ async def main():
     init_options = InitializationOptions(
         server_name="ombra-mcp",
         server_version="2.1.0",
-        capabilities=ServerCapabilities(tools=True),
+        capabilities=ServerCapabilities(tools=ToolsCapability()),
     )
     async with stdio_server() as (read_stream, write_stream):
         await app.run(read_stream, write_stream, init_options)

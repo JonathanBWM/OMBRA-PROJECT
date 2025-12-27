@@ -4,6 +4,9 @@
 #include "vmx.h"
 #include "vmcs.h"
 #include "ept.h"
+#include "nested.h"
+#include "timing.h"
+#include "debug.h"
 #include "../shared/msr_defs.h"
 #include "../shared/cpu_defs.h"
 #include "../shared/vmcs_fields.h"
@@ -29,8 +32,12 @@ OMBRA_STATUS VmxCheckSupport(void) {
     }
 
     // Check if hypervisor already running (bit 31)
+    // NOTE: For nested scenario (ZeroHVCI), we expect this bit to be set
+    // We'll detect and handle nested virtualization instead of failing
     if (info[2] & CPUID_FEAT_ECX_HV) {
-        return OMBRA_ERROR_ALREADY_RUNNING;
+        // Hypervisor present - could be bare VMX or nested (Hyper-V)
+        // Don't fail here - let nested detection handle it
+        TRACE("Hypervisor bit set - nested virtualization possible");
     }
 
     // Check IA32_FEATURE_CONTROL
@@ -227,6 +234,29 @@ void VmcsWrite(U32 field, U64 value) {
 }
 
 // =============================================================================
+// CPU Identification
+// =============================================================================
+
+// Get current processor's APIC ID using correct method for x2APIC/legacy
+static U32 GetCurrentApicId(void) {
+    int info[4];
+
+    // Check for x2APIC support via CPUID.1:ECX[bit 21]
+    __cpuid(info, 1);
+
+    if (info[2] & (1 << 21)) {
+        // x2APIC supported - use CPUID leaf 0xB for full 32-bit ID
+        // Leaf 0xB (Extended Topology Enumeration), subleaf 0
+        // Returns x2APIC ID in EDX
+        __cpuidex(info, 0xB, 0);
+        return (U32)info[3];  // EDX contains full x2APIC ID
+    } else {
+        // Legacy APIC - use 8-bit ID from CPUID.1:EBX[31:24]
+        return (info[1] >> 24) & 0xFF;
+    }
+}
+
+// =============================================================================
 // Per-CPU Initialization
 // =============================================================================
 
@@ -241,7 +271,9 @@ OMBRA_STATUS VmxInitializeCpu(HV_INIT_PARAMS* params) {
     cpu = &cpuStorage[params->CpuId];
 
     // Initialize structure
-    cpu->CpuId = params->CpuId;
+    // Store actual APIC ID (not the index) for correct CPU identification
+    // This ensures VmxGetCurrentCpu() can find the right CPU structure
+    cpu->CpuId = GetCurrentApicId();
     cpu->Virtualized = false;
 
     cpu->VmxonRegion = params->VmxonVirtual;
@@ -263,10 +295,44 @@ OMBRA_STATUS VmxInitializeCpu(HV_INIT_PARAMS* params) {
     cpu->LastTsc = 0;
     cpu->VmexitCount = 0;
 
+    // Initialize MSR virtualization - capture current IA32_TSC_AUX value
+    // This maintains processor affinity expectations
+    cpu->GuestTscAux = (U32)__readmsr(MSR_IA32_TSC_AUX);
+
     cpu->Self = cpu;
+
+    // Initialize timing compensation system
+    // This sets up TSC offset tracking and calibrates VM-exit overhead
+    TimingInitialize(cpu);
 
     // Store in global array
     g_Ombra.Cpus[params->CpuId] = cpu;
+
+    // Detect nested virtualization (only on CPU 0)
+    // All CPUs share the same nested state via g_NestedState
+    extern NESTED_STATE g_NestedState;  // Defined in nested.c
+
+    if (params->CpuId == 0) {
+        // First CPU - detect and initialize nested state with shadow resources
+        status = NestedDetectHypervisor(&g_NestedState,
+                                        params->VmreadBitmapVirtual,
+                                        params->VmreadBitmapPhysical,
+                                        params->VmwriteBitmapVirtual,
+                                        params->VmwriteBitmapPhysical,
+                                        params->ShadowVmcsVirtual,
+                                        params->ShadowVmcsPhysical);
+        if (OMBRA_SUCCESS(status)) {
+            if (g_NestedState.IsNested) {
+                INFO("Running nested under %s", NestedGetHypervisorName(g_NestedState.L0Type));
+                if (g_NestedState.IsHyperV) {
+                    INFO("Hyper-V coexistence mode enabled (ZeroHVCI scenario)");
+                }
+            }
+        }
+    }
+
+    // Link this CPU to the global nested state
+    cpu->Nested = &g_NestedState;
 
     // Check VMX support
     status = VmxCheckSupport();
@@ -332,11 +398,8 @@ OMBRA_STATUS VmxLaunchCpu(VMX_CPU* cpu) {
 // =============================================================================
 
 VMX_CPU* VmxGetCurrentCpu(void) {
-    // In a multi-CPU scenario, we'd read the processor ID
-    // For now, simple implementation using CPUID
-    int info[4];
-    __cpuid(info, 1);
-    U32 apicId = (info[1] >> 24) & 0xFF;
+    // Get APIC ID using correct method (handles both x2APIC and legacy)
+    U32 apicId = GetCurrentApicId();
 
     // Map APIC ID to our CPU index
     // This is simplified - real implementation would build a proper mapping

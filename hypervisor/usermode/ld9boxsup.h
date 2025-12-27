@@ -20,31 +20,40 @@
 #define LD9BOXSUP_SERVICE_NAME  L"Ld9BoxSup"
 
 // =============================================================================
-// IOCTL Codes
+// IOCTL Codes - VERIFIED from Ld9BoxSup.sys binary disassembly (Dec 2025)
 // =============================================================================
-// CTL_CODE(FILE_DEVICE_UNKNOWN, 0xA00 + n, METHOD_BUFFERED, FILE_WRITE_ACCESS)
+//
+// Formula: ((0x22) << 16) | ((0x02) << 14) | (((func) | 128) << 2) | (0)
+//
+// CRITICAL: LDPlayer modified VirtualBox's IOCTL numbering!
+// They inserted QUERY_INFO at function 2, shifting subsequent functions.
+// These codes are VERIFIED against the actual driver binary.
+//
 
-#define SUP_IOCTL_COOKIE            0x22A000    // Establish session
-#define SUP_IOCTL_LDR_OPEN          0x22A004    // Open module for loading
-#define SUP_IOCTL_LDR_LOAD          0x22A008    // Load module into kernel
-#define SUP_IOCTL_LDR_FREE          0x22A00C    // Free loaded module
-#define SUP_IOCTL_LDR_GET_SYMBOL    0x22A010    // Resolve kernel symbol
-#define SUP_IOCTL_CONT_ALLOC        0x22A014    // Allocate contiguous memory
-#define SUP_IOCTL_CONT_FREE         0x22A018    // Free contiguous memory
-#define SUP_IOCTL_LOW_ALLOC         0x22A01C    // Allocate below 4GB
-#define SUP_IOCTL_LOW_FREE          0x22A020    // Free low memory
-#define SUP_IOCTL_GIP_MAP           0x22A024    // Map Global Info Page
-#define SUP_IOCTL_PAGE_ALLOC_EX     0x22A028    // Allocate pages with options
-#define SUP_IOCTL_PAGE_MAP_KERNEL   0x22A02C    // Map pages to kernel
-#define SUP_IOCTL_PAGE_PROTECT      0x22A030    // Change page protection
-#define SUP_IOCTL_PAGE_FREE         0x22A034    // Free page allocation
-#define SUP_IOCTL_CALL_VMMR0        0x22A03C    // Execute in Ring-0
-#define SUP_IOCTL_PAGE_LOCK         0x22A048    // Lock pages in memory
-#define SUP_IOCTL_PAGE_UNLOCK       0x22A04C    // Unlock pages
-#define SUP_IOCTL_VT_CAPS           0x22A050    // Query VT-x capabilities
-#define SUP_IOCTL_GET_HWVIRT_MSRS   0x22A054    // Get VMX MSR values
-#define SUP_IOCTL_TSC_DELTA_MEASURE 0x22A05C    // Measure TSC delta
-#define SUP_IOCTL_MSR_PROBER        0x22A068    // Read/Write arbitrary MSRs
+#define SUP_IOCTL_COOKIE            0x00228204  // Function 1 - Establish session
+#define SUP_IOCTL_QUERY_INFO        0x00228208  // Function 2 - LDPlayer added
+#define SUP_IOCTL_LDR_OPEN          0x0022820C  // Function 3 - Open module for loading
+#define SUP_IOCTL_LDR_LOAD          0x00228210  // Function 4 - Load module into kernel
+#define SUP_IOCTL_LDR_FREE          0x00228214  // Function 5 - Free loaded module
+#define SUP_IOCTL_LDR_GET_SYMBOL    0x00228218  // Function 6 - Resolve kernel symbol
+#define SUP_IOCTL_CALL_VMMR0        0x0022821C  // Function 7 - Execute in Ring-0
+#define SUP_IOCTL_LOW_ALLOC         0x00228220  // Function 8 - Allocate below 4GB
+#define SUP_IOCTL_LOW_FREE          0x00228224  // Function 9 - Free low memory
+#define SUP_IOCTL_PAGE_ALLOC_EX     0x00228228  // Function 10 - Allocate pages (R3/R0)
+#define SUP_IOCTL_PAGE_MAP_KERNEL   0x0022822C  // Function 11 - Map pages to kernel
+#define SUP_IOCTL_PAGE_PROTECT      0x00228230  // Function 12 - Change page protection
+#define SUP_IOCTL_PAGE_FREE         0x00228234  // Function 13 - Free page allocation
+#define SUP_IOCTL_PAGE_LOCK         0x00228238  // Function 14 - Lock pages in memory
+#define SUP_IOCTL_PAGE_UNLOCK       0x0022823C  // Function 15 - Unlock pages
+#define SUP_IOCTL_CONT_ALLOC        0x00228240  // Function 16 - Allocate contiguous memory
+#define SUP_IOCTL_CONT_FREE         0x00228244  // Function 17 - Free contiguous memory
+#define SUP_IOCTL_MSR_PROBER        0x00228288  // Function 34 - Read/Write arbitrary MSRs
+
+// Legacy defines for compatibility (map to correct codes)
+#define SUP_IOCTL_VT_CAPS           0x00228250  // Query VT-x capabilities (estimated)
+#define SUP_IOCTL_GET_HWVIRT_MSRS   0x00228254  // Get VMX MSR values (estimated)
+#define SUP_IOCTL_TSC_DELTA_MEASURE 0x0022825C  // Measure TSC delta (estimated)
+#define SUP_IOCTL_GIP_MAP           0x00228248  // Map Global Info Page (estimated)
 
 // =============================================================================
 // Common Header
@@ -100,25 +109,41 @@ typedef struct _SUPCONTALLOC_OUT {
 } SUPCONTALLOC_OUT;
 
 // =============================================================================
-// SUP_IOCTL_PAGE_ALLOC_EX — Allocate Pages with Options
+// SUP_IOCTL_PAGE_ALLOC_EX — Allocate Pages with Dual R3/R0 Mappings
 // =============================================================================
+// VERIFIED structure layout from Ld9BoxSup.sys binary analysis.
+// Note: Input struct does NOT include SUPREQHDR - it's separate.
 
-typedef struct _SUPPAGEALLOC_IN {
-    SUPREQHDR   Hdr;
-    uint32_t    cPages;             // Number of pages
-    uint32_t    fKernelMapping : 1; // Create kernel mapping
-    uint32_t    fUserMapping : 1;   // Create user mapping
-    uint32_t    fReserved : 1;
-    uint32_t    fInterProcessShared : 1;
-    uint32_t    fReserved2 : 28;
-} SUPPAGEALLOC_IN;
+typedef struct _SUPPAGEALLOCEX_IN {
+    uint32_t    cPages;             // Number of 4KB pages to allocate
+    uint8_t     fKernelMapping;     // Map into kernel space (pvR0)
+    uint8_t     fUserMapping;       // Map into user space (pvR3)
+    uint8_t     fReserved0;
+    uint8_t     fReserved1;
+} SUPPAGEALLOCEX_IN;
 
-typedef struct _SUPPAGEALLOC_OUT {
-    SUPREQHDR   Hdr;
-    void*       pvR3;               // Ring-3 mapping (if requested)
-    void*       pvR0;               // Ring-0 mapping (if requested)
+typedef struct _SUPPAGEALLOCEX_OUT {
+    uint64_t    pvR3;               // Ring-3 mapping address (usermode writable)
+    uint64_t    pvR0;               // Ring-0 mapping address (kernel executable)
     // Followed by cPages * uint64_t of physical addresses
-} SUPPAGEALLOC_OUT;
+} SUPPAGEALLOCEX_OUT;
+
+// Combined request structure
+typedef struct _SUPPAGEALLOCEX {
+    SUPREQHDR   Hdr;
+    union {
+        SUPPAGEALLOCEX_IN  In;
+        SUPPAGEALLOCEX_OUT Out;
+    } u;
+} SUPPAGEALLOCEX;
+
+// Size calculations
+#define SUP_IOCTL_PAGE_ALLOC_EX_SIZE_IN  (sizeof(SUPREQHDR) + 8)
+#define SUP_IOCTL_PAGE_ALLOC_EX_SIZE_OUT(cPages) (sizeof(SUPREQHDR) + 16 + ((cPages) * 8))
+
+// Legacy type aliases for compatibility
+typedef SUPPAGEALLOCEX_IN  SUPPAGEALLOC_IN;
+typedef SUPPAGEALLOCEX_OUT SUPPAGEALLOC_OUT;
 
 // =============================================================================
 // SUP_IOCTL_CALL_VMMR0 — Execute in Ring-0
@@ -229,6 +254,19 @@ typedef struct _SUPLDRLOAD_OUT {
     void*       pvMod;                  // Module handle
     int32_t     eEPType;                // Entry point type
 } SUPLDRLOAD_OUT;
+
+// =============================================================================
+// SUP_IOCTL_LDR_FREE — Free Loaded Module
+// =============================================================================
+
+typedef struct _SUPLDRFREE_IN {
+    SUPREQHDR   Hdr;
+    void*       pvImageBase;            // Module base from LDR_OPEN
+} SUPLDRFREE_IN;
+
+typedef struct _SUPLDRFREE_OUT {
+    SUPREQHDR   Hdr;
+} SUPLDRFREE_OUT;
 
 // =============================================================================
 // SUP_IOCTL_LDR_GET_SYMBOL — Resolve Kernel Symbol

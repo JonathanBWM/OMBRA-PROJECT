@@ -108,6 +108,10 @@ void VmcsSetupControls(VMX_CPU* cpu, HV_INIT_PARAMS* params) {
     // RDTSC exiting for timing stealth
     procBased |= CPU_RDTSC_EXIT;
 
+    // TSC offsetting - allows us to adjust guest TSC reads via VMCS field
+    // This is critical for hiding VM-exit overhead from timing measurements
+    procBased |= CPU_TSC_OFFSETTING;
+
     // Enable secondary controls
     procBased |= CPU_SECONDARY_CONTROLS;
 
@@ -155,6 +159,10 @@ void VmcsSetupControls(VMX_CPU* cpu, HV_INIT_PARAMS* params) {
     exitCtls |= EXIT_SAVE_EFER;
     exitCtls |= EXIT_LOAD_EFER;
 
+    // Save/load PAT for consistent memory types
+    exitCtls |= EXIT_SAVE_PAT;
+    exitCtls |= EXIT_LOAD_PAT;
+
     // Save debug controls
     exitCtls |= EXIT_SAVE_DEBUG;
 
@@ -174,6 +182,9 @@ void VmcsSetupControls(VMX_CPU* cpu, HV_INIT_PARAMS* params) {
 
     // Load EFER on entry
     entryCtls |= ENTRY_LOAD_EFER;
+
+    // Load PAT on entry for consistent memory types
+    entryCtls |= ENTRY_LOAD_PAT;
 
     // Load debug controls
     entryCtls |= ENTRY_LOAD_DEBUG;
@@ -229,9 +240,33 @@ void VmcsSetupControls(VMX_CPU* cpu, HV_INIT_PARAMS* params) {
         // STEALTH: Intercept VMX-related MSRs to hide our presence
         // =====================================================================
 
-        // Helper macro to set bit for an MSR in the low range (0x00000000-0x00001FFF)
-        #define SET_MSR_READ(msr)  bitmap[(msr) / 8] |= (1 << ((msr) % 8))
-        #define SET_MSR_WRITE(msr) bitmap[0x800 + (msr) / 8] |= (1 << ((msr) % 8))
+        // MSR bitmap range definitions (Intel SDM Vol 3, 24.6.9)
+        #define MSR_LOW_RANGE_MAX   0x1FFF
+        #define MSR_HIGH_RANGE_MIN  0xC0000000
+        #define MSR_HIGH_RANGE_MAX  0xC0001FFF
+
+        // Helper macros for setting MSR intercept bits with bounds checking
+        // Low range (0x00000000-0x00001FFF)
+        #define SET_MSR_READ(msr) do { \
+            if ((msr) <= MSR_LOW_RANGE_MAX) \
+                bitmap[(msr) / 8] |= (1 << ((msr) % 8)); \
+        } while(0)
+
+        #define SET_MSR_WRITE(msr) do { \
+            if ((msr) <= MSR_LOW_RANGE_MAX) \
+                bitmap[0x800 + (msr) / 8] |= (1 << ((msr) % 8)); \
+        } while(0)
+
+        // High range (0xC0000000-0xC0001FFF)
+        #define SET_MSR_READ_HIGH(msr) do { \
+            if ((msr) >= MSR_HIGH_RANGE_MIN && (msr) <= MSR_HIGH_RANGE_MAX) \
+                bitmap[0x400 + ((msr) - 0xC0000000) / 8] |= (1 << (((msr) - 0xC0000000) % 8)); \
+        } while(0)
+
+        #define SET_MSR_WRITE_HIGH(msr) do { \
+            if ((msr) >= MSR_HIGH_RANGE_MIN && (msr) <= MSR_HIGH_RANGE_MAX) \
+                bitmap[0xC00 + ((msr) - 0xC0000000) / 8] |= (1 << (((msr) - 0xC0000000) % 8)); \
+        } while(0)
 
         // IA32_FEATURE_CONTROL (0x3A) - VMX enable/lock status
         SET_MSR_READ(0x3A);
@@ -243,8 +278,18 @@ void VmcsSetupControls(VMX_CPU* cpu, HV_INIT_PARAMS* params) {
             SET_MSR_READ(msr);
         }
 
+        // IA32_TSC_AUX (0xC0000103) - Processor ID for RDTSCP
+        // Virtualize to maintain consistent processor affinity
+        SET_MSR_READ_HIGH(0xC0000103);
+        SET_MSR_WRITE_HIGH(0xC0000103);
+
+        #undef MSR_LOW_RANGE_MAX
+        #undef MSR_HIGH_RANGE_MIN
+        #undef MSR_HIGH_RANGE_MAX
         #undef SET_MSR_READ
         #undef SET_MSR_WRITE
+        #undef SET_MSR_READ_HIGH
+        #undef SET_MSR_WRITE_HIGH
 
         TRACE("MSR bitmap configured for VMX stealth");
         VmcsWrite(VMCS_CTRL_MSR_BITMAP, cpu->MsrBitmapPhysical);
@@ -390,10 +435,10 @@ void VmcsSetupGuestState(VMX_CPU* cpu) {
     VmcsWrite(VMCS_GUEST_TR_SEL, seg.Selector);
     VmcsWrite(VMCS_GUEST_TR_BASE, seg.Base);
     VmcsWrite(VMCS_GUEST_TR_LIMIT, seg.Limit);
-    // TR must be busy TSS
+    // TR must be busy 64-bit TSS (type = 0x0B)
+    // Clear type field (bits 3:0) and set to busy TSS
     if (seg.AccessRights != SEG_ACCESS_UNUSABLE) {
-        seg.AccessRights |= 0x0B;  // Set to busy TSS type
-        seg.AccessRights &= ~0x02; // Clear bit 1 to avoid "not busy" type
+        seg.AccessRights = (seg.AccessRights & ~0x0F) | 0x0B;
     }
     VmcsWrite(VMCS_GUEST_TR_ACCESS, seg.AccessRights);
 
@@ -416,6 +461,13 @@ void VmcsSetupGuestState(VMX_CPU* cpu) {
     VmcsWrite(VMCS_GUEST_SYSENTER_ESP, __readmsr(MSR_IA32_SYSENTER_ESP));
     VmcsWrite(VMCS_GUEST_SYSENTER_EIP, __readmsr(MSR_IA32_SYSENTER_EIP));
     VmcsWrite(VMCS_GUEST_EFER, __readmsr(MSR_IA32_EFER));
+
+    // Page Attribute Table - required for consistent memory type handling
+    // Default PAT encoding: WB=6, WT=4, UC-=7, UC=0 for each of 8 entries
+    // Standard layout: 0x0007040600070406
+    // Read current PAT to preserve system configuration
+    U64 patMsr = __readmsr(MSR_IA32_PAT);
+    VmcsWrite(VMCS_GUEST_PAT, patMsr);
 
     // -------------------------------------------------------------------------
     // Activity and Interruptibility State
@@ -486,6 +538,11 @@ void VmcsSetupHostState(VMX_CPU* cpu) {
     VmcsWrite(VMCS_HOST_SYSENTER_ESP, __readmsr(MSR_IA32_SYSENTER_ESP));
     VmcsWrite(VMCS_HOST_SYSENTER_EIP, __readmsr(MSR_IA32_SYSENTER_EIP));
     VmcsWrite(VMCS_HOST_EFER, __readmsr(MSR_IA32_EFER));
+
+    // Page Attribute Table - required for VM-exit memory type consistency
+    // Must match guest PAT to avoid memory type conflicts
+    U64 patMsr = __readmsr(MSR_IA32_PAT);
+    VmcsWrite(VMCS_HOST_PAT, patMsr);
 
     // -------------------------------------------------------------------------
     // Host RSP and RIP

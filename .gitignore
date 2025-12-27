@@ -61,3 +61,20 @@ temp/
 
 # Git worktrees
 .worktrees/
+
+# MCP configuration (machine-specific paths - use .mcp.json.template)
+.mcp.json
+
+# Large documentation files (store externally)
+*.pdf
+docs/intel_hypervisor.pdf
+
+# Stray archives
+new.zip
+*.zip
+!docs/old_ombra_project/**/*.zip
+
+# Local reference docs (optional clones)
+hypervisor/docs/ombra_reference_c.zip
+hypervisor/docs/supdrv/
+hypervisor/docs/throttlestop/

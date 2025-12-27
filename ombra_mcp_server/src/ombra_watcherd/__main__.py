@@ -12,10 +12,11 @@ Usage:
 """
 
 import sys
+import os
 import argparse
 from pathlib import Path
 
-from .launchd import LaunchdManager
+from .launchd import LaunchdManager, WATCH_PATH as DEFAULT_WATCH_PATH
 from .daemon import OmbraWatcherd
 
 
@@ -48,8 +49,8 @@ def main():
     run_parser.add_argument(
         "--watch-path",
         type=Path,
-        default=Path("/Users/jonathanmcclintock/PROJECT-OMBRA"),
-        help="Path to watch"
+        default=DEFAULT_WATCH_PATH,
+        help="Path to watch (default: auto-detected or OMBRA_PROJECT_ROOT env var)"
     )
     run_parser.add_argument(
         "--db-path",
@@ -63,8 +64,8 @@ def main():
     scan_parser.add_argument(
         "--path",
         type=Path,
-        default=Path("/Users/jonathanmcclintock/PROJECT-OMBRA"),
-        help="Path to scan"
+        default=DEFAULT_WATCH_PATH,
+        help="Path to scan (default: auto-detected or OMBRA_PROJECT_ROOT env var)"
     )
 
     args = parser.parse_args()
