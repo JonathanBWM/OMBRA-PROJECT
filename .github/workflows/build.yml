@@ -176,11 +176,13 @@ jobs:
         echo Resources compiled successfully
 
         echo Building usermode loader with embedded resources...
+        REM NOTE: payload_loader.c, loader_api.c, drv_loader.c removed - legacy code using broken structures
+        REM       main.c now uses hv_loader.c which uses correct supdrv.c implementation
         cl.exe /O2 /W4 /WX- /Fe:loader.exe ^
-          main.c driver_interface.c payload_loader.c loader_api.c debug_reader.c ^
+          main.c driver_interface.c debug_reader.c ^
           loader/hv_loader.c loader/pe_parser.c loader/pe_mapper.c ^
           loader/pe_relocs.c loader/pe_iat.c loader/pe_imports.c ^
-          loader/pe_utils.c loader/pe_wipe.c loader/drv_loader.c loader/cleanup.c ^
+          loader/pe_utils.c loader/pe_wipe.c loader/cleanup.c ^
           resources/resource_extract.c ^
           byovd/supdrv.c byovd/deployer.c byovd/crypto.c byovd/nt_helpers.c byovd/throttlestop.c ^
           tests/detection_baseline.c ^
