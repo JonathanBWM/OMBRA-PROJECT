@@ -196,7 +196,7 @@ DRV_STATUS DrvEstablishSession(DRV_CONTEXT* ctx) {
     memcpy(in.szMagic, SUP_COOKIE_MAGIC, sizeof(SUP_COOKIE_MAGIC));
 
     // Request version (VirtualBox 6.1.x compatible)
-    in.u32ReqVersion = 0x00290000;  // 6.1.x
+    in.u32ReqVersion = 0x00320000;  // LDPlayer 9.x
     in.u32MinVersion = 0x00230000;  // 6.0.0
 
     if (!DoIoctl(ctx->hDevice, SUP_IOCTL_COOKIE, &in, sizeof(in), &out, sizeof(out), NULL)) {
