@@ -247,6 +247,11 @@ UINT64 NtGetKernelExport(const char* szFunctionName) {
     DbgLog("NtGetKernelExport: %s = 0x%016llX (RVA=0x%llX)",
            szFunctionName, kernelAddr, rva);
 
+    printf("[DEBUG] About to FreeLibrary(hKernel=%p)\n", (void*)hKernel);
+    fflush(stdout);
     FreeLibrary(hKernel);
+    printf("[DEBUG] FreeLibrary complete\n");
+    fflush(stdout);
+
     return kernelAddr;
 }
