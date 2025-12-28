@@ -82,7 +82,12 @@ static BOOL PatchOmbraSection(void* image, U32 imageSize, PE_INFO* peInfo, U64 m
     }
 
     // Get pointer to .ombra in our image copy
-    LOADER_OMBRA_BOOTSTRAP* bootstrap = (LOADER_OMBRA_BOOTSTRAP*)((U8*)image + ombraSection->Rva);
+    // NOTE: Use FileOffset (raw file offset) not Rva (virtual address after loading)
+    // because we're working with the raw PE file, not the mapped image
+    printf("[DEBUG] Calculating bootstrap: image=%p + FileOffset=0x%X\n",
+           image, ombraSection->FileOffset);
+    fflush(stdout);
+    LOADER_OMBRA_BOOTSTRAP* bootstrap = (LOADER_OMBRA_BOOTSTRAP*)((U8*)image + ombraSection->FileOffset);
 
     // Verify magic
     if (bootstrap->Magic != OMBRA_MAGIC) {
