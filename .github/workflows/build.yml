@@ -96,14 +96,14 @@ jobs:
       working-directory: hypervisor/hypervisor
       run: |
         echo Linking hypervisor.sys...
-        echo WindowsSdkDir: %WindowsSdkDir%
-        echo WindowsSDKLibVersion: %WindowsSDKLibVersion%
+        echo.
+        echo NOTE: Hypervisor uses late-bound imports via params struct
+        echo       No kernel libs needed - all APIs resolved at runtime by loader
+        echo.
 
         link.exe /nologo /DRIVER /ENTRY:OmbraModuleInit /SUBSYSTEM:NATIVE ^
           /NODEFAULTLIB /OUT:hypervisor.sys ^
-          hypervisor.lib ^
-          "%WindowsSdkDir%Lib\%WindowsSDKLibVersion%km\x64\ntoskrnl.lib" ^
-          "%WindowsSdkDir%Lib\%WindowsSDKLibVersion%km\x64\hal.lib"
+          hypervisor.lib
         if %ERRORLEVEL% neq 0 exit /b 1
         echo Hypervisor driver linked successfully
         dir *.sys
