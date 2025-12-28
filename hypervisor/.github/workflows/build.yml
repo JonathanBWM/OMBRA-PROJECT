@@ -54,11 +54,12 @@ jobs:
         echo Building usermode loader...
         REM NOTE: payload_loader.c and loader_api.c removed - legacy code using broken structures
         REM       main.c now uses hv_loader.c which uses correct supdrv.c implementation
+        REM NOTE: drv_loader.c removed - Phase 2 feature not yet integrated, uses old ALLOC_INFO
         cl.exe /O2 /W4 /WX- /Fe:loader.exe ^
           main.c driver_interface.c ^
           loader/hv_loader.c loader/pe_parser.c loader/pe_mapper.c ^
           loader/pe_relocs.c loader/pe_iat.c loader/pe_imports.c ^
-          loader/pe_utils.c loader/pe_wipe.c loader/drv_loader.c ^
+          loader/pe_utils.c loader/pe_wipe.c ^
           byovd/supdrv.c byovd/deployer.c byovd/crypto.c byovd/nt_helpers.c byovd/throttlestop.c ^
           /I../shared /I. ^
           /link kernel32.lib advapi32.lib

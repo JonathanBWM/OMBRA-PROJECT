@@ -38,6 +38,7 @@ set(GUI_SOURCES
 
 # Loader source files from parent directory
 # NOTE: loader_api.c and payload_loader.c removed - legacy code using broken structures
+# NOTE: drv_loader.c removed - Phase 2 feature not yet integrated
 # TODO: GUI needs migration to use hv_loader.c API instead
 set(LOADER_SOURCES
     ../driver_interface.c
