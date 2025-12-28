@@ -192,10 +192,16 @@ UINT64 NtGetDriverBase(const wchar_t* wszDriverName) {
 // This allows resolving kernel symbols without SUP_IOCTL_LDR_GET_SYMBOL.
 
 UINT64 NtGetKernelExport(const char* szFunctionName) {
+    printf("[DEBUG] NtGetKernelExport ENTRY: '%s'\n", szFunctionName);
+    fflush(stdout);
+
     if (!g_NtInitialized && !NtInit()) {
         DbgLog("NtGetKernelExport: NtInit failed");
         return 0;
     }
+
+    printf("[DEBUG] NtGetKernelExport: NtInit passed\n");
+    fflush(stdout);
 
     DbgLog("NtGetKernelExport: Resolving '%s'", szFunctionName);
 

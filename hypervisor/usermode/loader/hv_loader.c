@@ -92,18 +92,26 @@ static BOOL PatchOmbraSection(void* image, U32 imageSize, PE_INFO* peInfo, U64 m
 }
 
 // =============================================================================
-// Resolve MmGetSystemRoutineAddress (via SupDrv IOCTL)
+// Resolve MmGetSystemRoutineAddress (via usermode symbol resolution)
 // =============================================================================
 
 static BOOL ResolveMmGetSystemRoutineAddress(SUPDRV_CTX* drv, U64* outAddr) {
-    void* addr;
-    if (!SupDrv_GetSymbol(drv, "MmGetSystemRoutineAddress", &addr)) {
-        printf("[-] Failed to resolve MmGetSystemRoutineAddress: %s\n",
-               SupDrv_GetLastError(drv));
+    (void)drv;  // Not needed - using usermode resolution
+
+    printf("[DEBUG] About to call NtGetKernelExport...\n");
+    fflush(stdout);
+
+    U64 addr = NtGetKernelExport("MmGetSystemRoutineAddress");
+
+    printf("[DEBUG] NtGetKernelExport returned: 0x%llX\n", addr);
+    fflush(stdout);
+
+    if (addr == 0) {
+        printf("[-] Failed to resolve MmGetSystemRoutineAddress via NtGetKernelExport\n");
         return FALSE;
     }
 
-    *outAddr = (U64)addr;
+    *outAddr = addr;
     printf("[+] MmGetSystemRoutineAddress @ 0x%llX\n", *outAddr);
     return TRUE;
 }
