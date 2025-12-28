@@ -67,11 +67,14 @@ static BOOL PatchOmbraSection(void* image, U32 imageSize, PE_INFO* peInfo, U64 m
         printf("[!] .ombra section not found in hypervisor\n");
         return FALSE;
     }
-    printf("[DEBUG] ombraSection OK, checking VirtualSize...\n");
-    fflush(stdout);
 
-    // Validate section size
-    printf("[DEBUG] About to access ombraSection->VirtualSize at %p\n", (void*)&ombraSection->VirtualSize);
+    // Print section info to verify it's not corrupted
+    printf("[DEBUG] peInfo->SectionCount=%u (should be < 16)\n", peInfo->SectionCount);
+    printf("[DEBUG] ombraSection: Name='%.8s' VA=0x%X Size=0x%X RawOffset=0x%X\n",
+           ombraSection->Name,
+           ombraSection->Rva,
+           ombraSection->VirtualSize,
+           ombraSection->RawDataOffset);
     fflush(stdout);
     if (ombraSection->VirtualSize < sizeof(LOADER_OMBRA_BOOTSTRAP)) {
         printf("[!] .ombra section too small: %u bytes\n", ombraSection->VirtualSize);
@@ -365,23 +368,33 @@ BOOL HvLoaderInit(HV_LOADER_CTX* ctx, const wchar_t* driverPath) {
 
 BOOL HvLoaderLoad(HV_LOADER_CTX* ctx, const void* hvImage, U32 hvImageSize) {
     U64 mmGetSystemRoutineAddress = 0;
-    PE_INFO peInfo = {0};
+
+    // PE_INFO is ~52KB - allocate on heap instead of stack to avoid stack overflow
+    PE_INFO* pPeInfo = (PE_INFO*)calloc(1, sizeof(PE_INFO));
+    if (!pPeInfo) {
+        printf("[-] Failed to allocate PE_INFO\n");
+        return FALSE;
+    }
+    printf("[DEBUG] Allocated PE_INFO (%zu bytes) at %p\n", sizeof(PE_INFO), (void*)pPeInfo);
+    fflush(stdout);
 
     printf("[*] Loading hypervisor (%u bytes) - self-contained mode\n", hvImageSize);
     printf("[*] Hypervisor will resolve symbols and allocate resources internally\n");
 
     // 1. Parse PE to get section info and relocation data
     printf("[*] Parsing hypervisor PE...\n");
-    if (!PeParse(hvImage, hvImageSize, &peInfo)) {
+    if (!PeParse(hvImage, hvImageSize, pPeInfo)) {
         printf("[-] Failed to parse hypervisor PE\n");
+        free(pPeInfo);
         return FALSE;
     }
     printf("[+] PE parsed: ImageBase=0x%llX, EntryRVA=0x%X, Sections=%u\n",
-           peInfo.ImageBase, peInfo.EntryPointRva, peInfo.SectionCount);
+           pPeInfo->ImageBase, pPeInfo->EntryPointRva, pPeInfo->SectionCount);
 
     // 2. Resolve MmGetSystemRoutineAddress - the bootstrap function
     printf("[*] Resolving bootstrap function...\n");
     if (!ResolveMmGetSystemRoutineAddress(&ctx->Drv, &mmGetSystemRoutineAddress)) {
+        free(pPeInfo);
         return FALSE;
     }
     printf("[DEBUG] ResolveMmGetSystemRoutineAddress returned, addr=0x%llX\n", mmGetSystemRoutineAddress);
@@ -395,6 +408,7 @@ BOOL HvLoaderLoad(HV_LOADER_CTX* ctx, const void* hvImage, U32 hvImageSize) {
     fflush(stdout);
     if (!hvImageCopy) {
         printf("[-] Failed to allocate image copy\n");
+        free(pPeInfo);
         return FALSE;
     }
     printf("[DEBUG] memcpy(%p, %p, %u) about to start\n", hvImageCopy, hvImage, hvImageSize);
@@ -411,7 +425,7 @@ BOOL HvLoaderLoad(HV_LOADER_CTX* ctx, const void* hvImage, U32 hvImageSize) {
     fflush(stdout);
     printf("[DEBUG] Patching message printed OK\n");
     fflush(stdout);
-    if (!PatchOmbraSection(hvImageCopy, hvImageSize, &peInfo, mmGetSystemRoutineAddress)) {
+    if (!PatchOmbraSection(hvImageCopy, hvImageSize, pPeInfo, mmGetSystemRoutineAddress)) {
         printf("[!] Warning: Could not patch .ombra section\n");
         printf("    Hypervisor may fail to initialize without MmGetSystemRoutineAddress\n");
     }
@@ -424,17 +438,19 @@ BOOL HvLoaderLoad(HV_LOADER_CTX* ctx, const void* hvImage, U32 hvImageSize) {
     printf("[*] Allocating kernel memory for hypervisor...\n");
     if (!AllocateHypervisorImage(ctx, hvImageSize)) {
         free(hvImageCopy);
+        free(pPeInfo);
         return FALSE;
     }
 
     // 7. Apply relocations to the image copy based on new kernel base
     printf("[*] Applying PE relocations (delta from 0x%llX to 0x%p)...\n",
-           peInfo.ImageBase, ctx->ImageBase);
-    peInfo.ImageBase = (U64)ctx->ImageBase;
+           pPeInfo->ImageBase, ctx->ImageBase);
+    pPeInfo->ImageBase = (U64)ctx->ImageBase;
 
-    if (!ApplyRelocations(hvImageCopy, &peInfo, (U64)ctx->ImageBase)) {
+    if (!ApplyRelocations(hvImageCopy, pPeInfo, (U64)ctx->ImageBase)) {
         printf("[-] Failed to apply relocations\n");
         free(hvImageCopy);
+        free(pPeInfo);
         // TODO: Free LDR_OPEN memory
         ctx->ImageBase = NULL;
         return FALSE;
@@ -443,12 +459,14 @@ BOOL HvLoaderLoad(HV_LOADER_CTX* ctx, const void* hvImage, U32 hvImageSize) {
 
     // 8. Execute hypervisor entry point (OmbraModuleInit)
     printf("[*] Executing OmbraModuleInit...\n");
-    if (!ExecuteHypervisorEntry(ctx, hvImageCopy, hvImageSize, &peInfo)) {
+    if (!ExecuteHypervisorEntry(ctx, hvImageCopy, hvImageSize, pPeInfo)) {
         free(hvImageCopy);
+        free(pPeInfo);
         return FALSE;
     }
 
     free(hvImageCopy);
+    free(pPeInfo);  // Free heap-allocated PE_INFO
 
     ctx->Loaded = TRUE;
     ctx->Running = TRUE;
