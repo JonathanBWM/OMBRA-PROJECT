@@ -111,7 +111,14 @@ static BOOL ResolveMmGetSystemRoutineAddress(SUPDRV_CTX* drv, U64* outAddr) {
         return FALSE;
     }
 
+    printf("[DEBUG] About to write to outAddr=%p\n", (void*)outAddr);
+    fflush(stdout);
+
     *outAddr = addr;
+
+    printf("[DEBUG] Write complete, returning TRUE\n");
+    fflush(stdout);
+
     printf("[+] MmGetSystemRoutineAddress @ 0x%llX\n", *outAddr);
     return TRUE;
 }
