@@ -1,0 +1,58 @@
+{
+  "driver": {
+    "path": "/path/to/drivers/ld9boxdrv.sys",
+    "name": "ld9boxdrv.sys",
+    "hash_sha256": "a1b2c3d4e5f6789012345678901234567890abcdef1234567890abcdef123456",
+    "hash_md5": "d41d8cd98f00b204e9800998ecf8427e",
+    "hash_sha1": "da39a3ee5e6b4b0d3255bfef95601890afd80709"
+  },
+  "scanner_results": {
+    "capability_tier": "S",
+    "final_score": 95.0,
+    "classification": "Hypervisor-Ready Module Loader",
+    "driver_family": "LDPlayer/Ld9Box",
+    "priority": 1
+  },
+  "capabilities": {
+    "module_loading": true,
+    "physical_memory": true,
+    "msr_access": true,
+    "process_control": false
+  },
+  "dangerous_apis": [
+    "ZwLoadDriver",
+    "ZwSetSystemInformation",
+    "MmMapIoSpace",
+    "ZwOpenSection",
+    "__readmsr"
+  ],
+  "detected_ioctls": [
+    "0x222004",
+    "0x222008",
+    "0x22200C",
+    "0x222010"
+  ],
+  "age_analysis": {
+    "era": "modern",
+    "age_score": 95,
+    "warning": "Actively maintained, high-value target"
+  },
+  "suggested_tasks": [
+    "load_driver",
+    "analyze_imports",
+    "analyze_exports",
+    "trace_ldr_load_handler",
+    "find_module_loading_ioctls",
+    "analyze_symbol_resolution_path",
+    "trace_physical_memory_apis",
+    "find_phys_read_write_ioctls",
+    "trace_msr_apis",
+    "find_msr_read_write_ioctls",
+    "decode_all_ioctls",
+    "trace_dispatch_handler",
+    "analyze_vbox_ldr_protocol",
+    "document_vulnerabilities",
+    "create_attack_chains",
+    "generate_exploitation_report"
+  ]
+}

@@ -1,0 +1,50 @@
+# Priority MS Learn pages for hypervisor/driver development
+# Topics: MDL, Physical Memory, Pool Allocation, Driver Communication
+
+# MDL
+https://learn.microsoft.com/en-us/windows-hardware/drivers/kernel/using-mdls
+https://learn.microsoft.com/en-us/windows-hardware/drivers/ddi/wdm/nf-wdm-ioallocatemdl
+https://learn.microsoft.com/en-us/windows-hardware/drivers/ddi/wdm/nf-wdm-mmprobeandlockpages
+https://learn.microsoft.com/en-us/windows-hardware/drivers/ddi/wdm/nf-wdm-mmbuildmdlfornonpagedpool
+https://learn.microsoft.com/en-us/windows-hardware/drivers/ddi/wdm/nf-wdm-mmgetsystemaddressformdlsafe
+https://learn.microsoft.com/en-us/windows-hardware/drivers/ddi/wdm/ns-wdm-_mdl
+
+# Memory Manager
+https://learn.microsoft.com/en-us/windows-hardware/drivers/kernel/windows-kernel-mode-memory-manager
+https://learn.microsoft.com/en-us/windows-hardware/drivers/kernel/managing-memory-for-drivers
+https://learn.microsoft.com/en-us/windows-hardware/drivers/kernel/allocating-system-space-memory
+https://learn.microsoft.com/en-us/windows-hardware/drivers/kernel/using-lookaside-lists
+https://learn.microsoft.com/en-us/windows-hardware/drivers/kernel/mapping-bus-relative-addresses-to-virtual-addresses
+
+# Physical Memory
+https://learn.microsoft.com/en-us/windows-hardware/drivers/ddi/wdm/nf-wdm-mmmapiospacex
+https://learn.microsoft.com/en-us/windows-hardware/drivers/ddi/wdm/nf-wdm-mmgetphysicaladdress
+https://learn.microsoft.com/en-us/windows-hardware/drivers/ddi/ntddk/nf-ntddk-mmallocatecontiguousmemory
+https://learn.microsoft.com/en-us/windows-hardware/drivers/ddi/wdm/nf-wdm-mmallocatepagesformdl
+
+# Pool Allocation
+https://learn.microsoft.com/en-us/windows-hardware/drivers/ddi/wdm/nf-wdm-exallocatepool2
+https://learn.microsoft.com/en-us/windows-hardware/drivers/ddi/wdm/nf-wdm-exallocatepoolwithtag
+https://learn.microsoft.com/en-us/windows-hardware/drivers/kernel/using-memory-efficiently
+
+# Driver Communication / IOCTL
+https://learn.microsoft.com/en-us/windows-hardware/drivers/kernel/handling-irps
+https://learn.microsoft.com/en-us/windows-hardware/drivers/kernel/irp-major-function-codes
+https://learn.microsoft.com/en-us/windows-hardware/drivers/kernel/buffer-descriptions-for-i-o-control-codes
+https://learn.microsoft.com/en-us/windows-hardware/drivers/kernel/defining-i-o-control-codes
+https://learn.microsoft.com/en-us/windows-hardware/drivers/kernel/windows-kernel-mode-i-o-manager
+
+# Driver Objects
+https://learn.microsoft.com/en-us/windows-hardware/drivers/kernel/introduction-to-driver-objects
+https://learn.microsoft.com/en-us/windows-hardware/drivers/kernel/introduction-to-device-objects
+https://learn.microsoft.com/en-us/windows-hardware/drivers/ddi/wdm/nf-wdm-iocreatedevice
+https://learn.microsoft.com/en-us/windows-hardware/drivers/ddi/ntddk/nf-ntddk-iocreatedriver
+
+# Synchronization / IRQL
+https://learn.microsoft.com/en-us/windows-hardware/drivers/kernel/managing-hardware-priorities
+https://learn.microsoft.com/en-us/windows-hardware/drivers/kernel/spin-locks
+https://learn.microsoft.com/en-us/windows-hardware/drivers/kernel/using-passive-level-interrupt-handling
+
+# Interrupt handling
+https://learn.microsoft.com/en-us/windows-hardware/drivers/kernel/introduction-to-interrupt-service-routines
+https://learn.microsoft.com/en-us/windows-hardware/drivers/kernel/introduction-to-dpc-objects

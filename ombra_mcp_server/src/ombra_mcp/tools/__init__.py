@@ -98,6 +98,30 @@ from .project_brain import (
     seed_components,
 )
 
+from .vergilius import (
+    get_structure,
+    get_field_offset,
+    compare_versions,
+    get_hypervisor_offsets,
+    find_field_usage,
+    list_structures,
+    list_versions,
+    generate_offsets_header,
+)
+
+# NEW Dec 2025: Refactored database modules
+from . import anticheat_db
+from . import evasion_db
+from . import byovd_db
+from . import semantic_search
+from . import mslearn_db
+
+# Driver RE tools (Dec 27, 2025)
+from . import driver_tools
+from . import ioctl_tools
+from . import import_tools
+from . import export_tools
+
 __all__ = [
     # Binary Scanner
     "scan_binary_signatures",
@@ -171,4 +195,24 @@ __all__ = [
     "refresh_analysis",
     "get_daemon_status",
     "seed_components",
+    # Vergilius - Windows Kernel Structures
+    "get_structure",
+    "get_field_offset",
+    "compare_versions",
+    "get_hypervisor_offsets",
+    "find_field_usage",
+    "list_structures",
+    "list_versions",
+    "generate_offsets_header",
+    # NEW Dec 2025: Database modules
+    "anticheat_db",
+    "evasion_db",
+    "byovd_db",
+    "semantic_search",
+    "mslearn_db",
+    # Driver RE tools (Dec 27, 2025)
+    "driver_tools",
+    "ioctl_tools",
+    "import_tools",
+    "export_tools",
 ]

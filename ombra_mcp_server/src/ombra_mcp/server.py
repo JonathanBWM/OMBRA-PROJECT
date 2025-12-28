@@ -90,6 +90,54 @@ from .tools.concepts import (
     dismiss_concept_finding,
 )
 
+# Import Vergilius Windows kernel structure tools
+from .tools.vergilius import (
+    get_structure,
+    get_field_offset,
+    compare_versions,
+    get_hypervisor_offsets,
+    find_field_usage,
+    list_structures,
+    list_versions,
+    generate_offsets_header,
+)
+
+# Import new database tools (MCP Refactor Dec 2025)
+from .tools import anticheat_db
+from .tools import evasion_db
+from .tools import byovd_db
+from .tools import semantic_search
+from .tools import mslearn_db
+
+# Import Driver RE tools (Dec 27, 2025)
+from .tools import driver_tools
+from .tools import ioctl_tools
+from .tools import import_tools
+from .tools import export_tools
+
+# Import Driver Mapper tools
+from .tools.driver_mapper import (
+    get_pe_parsing_guide,
+    get_import_resolution_guide,
+    get_relocation_guide,
+    get_memory_allocation_guide,
+    get_cleanup_guide,
+    get_syscall_hook_guide,
+    validate_driver_binary,
+    generate_mapping_checklist,
+)
+
+# Import HVCI Bypass tools
+from .tools.hvci_bypass import (
+    get_zerohvci_architecture,
+    get_hypercall_protocol,
+    get_hyperv_hijack_concepts,
+    get_phase_implementation_guide,
+    get_detection_mitigation,
+    get_build_integration_guide,
+    get_amd_vs_intel_considerations,
+)
+
 # Server instance
 app = Server("ombra-mcp")
 
@@ -1305,6 +1353,60 @@ TOOLS = [
         "type": "object", "properties": {}
     }),
 
+    # Driver Mapper Tools
+    Tool(name="get_pe_parsing_guide", description="Get PE header parsing guide for manual driver mapping", inputSchema={
+        "type": "object", "properties": {}
+    }),
+    Tool(name="get_import_resolution_guide", description="Get import resolution strategies for mapped drivers", inputSchema={
+        "type": "object", "properties": {}
+    }),
+    Tool(name="get_relocation_guide", description="Get relocation handling guide for mapped drivers", inputSchema={
+        "type": "object", "properties": {}
+    }),
+    Tool(name="get_memory_allocation_guide", description="Get kernel memory allocation approaches for driver mapping", inputSchema={
+        "type": "object", "properties": {}
+    }),
+    Tool(name="get_cleanup_guide", description="Get anti-forensic cleanup guide for mapped drivers", inputSchema={
+        "type": "object", "properties": {}
+    }),
+    Tool(name="get_syscall_hook_guide", description="Get syscall hook installation guide", inputSchema={
+        "type": "object", "properties": {}
+    }),
+    Tool(name="validate_driver_binary", description="Validate PE binary for kernel mapping compatibility", inputSchema={
+        "type": "object",
+        "properties": {"pe_info": {"type": "object", "description": "PE header info dict with magic, machine, size, etc."}},
+        "required": ["pe_info"]
+    }),
+    Tool(name="generate_mapping_checklist", description="Generate driver mapping implementation checklist", inputSchema={
+        "type": "object",
+        "properties": {"driver_name": {"type": "string", "description": "Name of driver being mapped", "default": "driver.sys"}}
+    }),
+
+    # HVCI Bypass Tools
+    Tool(name="get_zerohvci_architecture", description="Get ZeroHVCI/runtime Hyper-V hijacking architecture overview", inputSchema={
+        "type": "object", "properties": {}
+    }),
+    Tool(name="get_hypercall_protocol", description="Get Hyper-V hypercall verification protocol", inputSchema={
+        "type": "object", "properties": {}
+    }),
+    Tool(name="get_hyperv_hijack_concepts", description="Get runtime Hyper-V hijacking concepts and VMExit handler patching", inputSchema={
+        "type": "object", "properties": {}
+    }),
+    Tool(name="get_phase_implementation_guide", description="Get phase-specific HVCI bypass implementation guide", inputSchema={
+        "type": "object",
+        "properties": {"phase": {"type": "integer", "description": "Phase number (1-4)", "minimum": 1, "maximum": 4}},
+        "required": ["phase"]
+    }),
+    Tool(name="get_detection_mitigation", description="Get HVCI bypass detection mitigation strategies", inputSchema={
+        "type": "object", "properties": {}
+    }),
+    Tool(name="get_build_integration_guide", description="Get HVCI bypass build integration patterns", inputSchema={
+        "type": "object", "properties": {}
+    }),
+    Tool(name="get_amd_vs_intel_considerations", description="Get AMD vs Intel HVCI bypass considerations", inputSchema={
+        "type": "object", "properties": {}
+    }),
+
     # Project Brain Tools
     Tool(name="get_project_status", description="Get overall project health dashboard with findings count, critical issues, and component status", inputSchema={
         "type": "object",
@@ -1452,6 +1554,548 @@ TOOLS = [
         },
         "required": ["finding_id"]
     }),
+
+    # Vergilius - Windows Kernel Structure Reference
+    Tool(name="get_structure", description="Get complete Windows kernel structure definition with all fields and offsets", inputSchema={
+        "type": "object",
+        "properties": {
+            "name": {"type": "string", "description": "Structure name (e.g., _EPROCESS, _MDL, _POOL_HEADER)"},
+            "version": {"type": "string", "description": "Windows version (e.g., win10-22h2, win11-21h2)", "default": "win10-22h2"}
+        },
+        "required": ["name"]
+    }),
+    Tool(name="get_field_offset", description="Get offset of a specific field in a Windows kernel structure", inputSchema={
+        "type": "object",
+        "properties": {
+            "struct": {"type": "string", "description": "Structure name (e.g., _EPROCESS)"},
+            "field": {"type": "string", "description": "Field name (e.g., UniqueProcessId)"},
+            "version": {"type": "string", "description": "Windows version", "default": "win10-22h2"}
+        },
+        "required": ["struct", "field"]
+    }),
+    Tool(name="compare_versions", description="Compare structure or field offsets across Windows versions", inputSchema={
+        "type": "object",
+        "properties": {
+            "struct": {"type": "string", "description": "Structure name"},
+            "field": {"type": "string", "description": "Optional field name (omit to compare struct sizes)"}
+        },
+        "required": ["struct"]
+    }),
+    Tool(name="get_hypervisor_offsets", description="Get all critical kernel offsets for hypervisor development", inputSchema={
+        "type": "object",
+        "properties": {
+            "version": {"type": "string", "description": "Windows version", "default": "win10-22h2"}
+        }
+    }),
+    Tool(name="find_field_usage", description="Find all structures containing a specific type", inputSchema={
+        "type": "object",
+        "properties": {
+            "field_type": {"type": "string", "description": "Type to search for (e.g., _MDL*, _EPROCESS*)"},
+            "version": {"type": "string", "description": "Windows version", "default": "win10-22h2"}
+        },
+        "required": ["field_type"]
+    }),
+    Tool(name="list_structures", description="List all available kernel structures for a Windows version", inputSchema={
+        "type": "object",
+        "properties": {
+            "version": {"type": "string", "description": "Windows version", "default": "win10-22h2"}
+        }
+    }),
+    Tool(name="list_versions", description="List all available Windows versions in the Vergilius database", inputSchema={
+        "type": "object", "properties": {}
+    }),
+    Tool(name="generate_offsets_header", description="Generate C header with version-specific kernel offsets", inputSchema={
+        "type": "object",
+        "properties": {
+            "version": {"type": "string", "description": "Windows version", "default": "win10-22h2"}
+        }
+    }),
+
+    # ==========================================================================
+    # Anti-Cheat Intel Database (anticheat_intel.db) - NEW Dec 2025
+    # ==========================================================================
+    Tool(name="get_anticheat_list", description="Get list of all tracked anti-cheats", inputSchema={
+        "type": "object", "properties": {}
+    }),
+    Tool(name="get_detection_methods", description="Get detection methods with filters", inputSchema={
+        "type": "object",
+        "properties": {
+            "anticheat": {"type": "string", "description": "Filter by anti-cheat (EAC, BattlEye, Vanguard)"},
+            "category": {"type": "string", "description": "Filter by category (timing, memory, msr, behavioral)"},
+            "severity": {"type": "string", "description": "Filter by severity (low, medium, high, critical)"}
+        }
+    }),
+    Tool(name="get_detection_method_detail", description="Get full details for a detection method", inputSchema={
+        "type": "object",
+        "properties": {"method_id": {"type": "string", "description": "Method ID (e.g., EAC-PML4E)"}},
+        "required": ["method_id"]
+    }),
+    Tool(name="get_bypasses_for_anticheat", description="Get all bypass techniques for an anti-cheat", inputSchema={
+        "type": "object",
+        "properties": {"anticheat": {"type": "string", "description": "Anti-cheat name"}},
+        "required": ["anticheat"]
+    }),
+    Tool(name="get_timing_thresholds_db", description="Get timing thresholds from database", inputSchema={
+        "type": "object",
+        "properties": {"anticheat": {"type": "string", "description": "Optional anti-cheat filter"}}
+    }),
+    Tool(name="get_signatures", description="Get known signatures anti-cheats scan for", inputSchema={
+        "type": "object",
+        "properties": {"anticheat": {"type": "string", "description": "Optional anti-cheat filter"}}
+    }),
+    Tool(name="search_detections", description="Full-text search across detection methods", inputSchema={
+        "type": "object",
+        "properties": {"query": {"type": "string", "description": "Search query"}},
+        "required": ["query"]
+    }),
+    Tool(name="add_detection_method", description="Add a new detection method to database", inputSchema={
+        "type": "object",
+        "properties": {
+            "anticheat": {"type": "string"},
+            "method_id": {"type": "string"},
+            "category": {"type": "string"},
+            "name": {"type": "string"},
+            "description": {"type": "string"},
+            "technique": {"type": "string"},
+            "check_frequency": {"type": "string"},
+            "severity": {"type": "string"},
+            "source": {"type": "string"}
+        },
+        "required": ["anticheat", "method_id", "category", "name", "description"]
+    }),
+    Tool(name="add_bypass", description="Add a bypass technique for a detection method", inputSchema={
+        "type": "object",
+        "properties": {
+            "method_id": {"type": "string", "description": "Detection method to bypass"},
+            "technique": {"type": "string"},
+            "description": {"type": "string"},
+            "implementation": {"type": "string"},
+            "difficulty": {"type": "string"},
+            "effectiveness": {"type": "string"}
+        },
+        "required": ["method_id", "technique", "description"]
+    }),
+
+    # ==========================================================================
+    # Evasion Techniques Database (evasion_techniques.db) - NEW Dec 2025
+    # ==========================================================================
+    Tool(name="get_evasion_categories", description="Get all evasion technique categories", inputSchema={
+        "type": "object", "properties": {}
+    }),
+    Tool(name="get_techniques", description="Get evasion techniques with optional filters", inputSchema={
+        "type": "object",
+        "properties": {
+            "category": {"type": "string", "description": "Filter by category"},
+            "search": {"type": "string", "description": "Search in name/description"}
+        }
+    }),
+    Tool(name="get_technique_detail", description="Get full technique details with steps and code", inputSchema={
+        "type": "object",
+        "properties": {"name_or_short": {"type": "string", "description": "Technique name or short name"}},
+        "required": ["name_or_short"]
+    }),
+    Tool(name="get_bypass_chains", description="Get all multi-step bypass chains", inputSchema={
+        "type": "object", "properties": {}
+    }),
+    Tool(name="get_bypass_chain", description="Get specific bypass chain by name", inputSchema={
+        "type": "object",
+        "properties": {"name": {"type": "string"}},
+        "required": ["name"]
+    }),
+    Tool(name="get_cleanup_procedures", description="Get forensic cleanup procedures", inputSchema={
+        "type": "object", "properties": {}
+    }),
+    Tool(name="get_cleanup_procedure", description="Get specific cleanup procedure", inputSchema={
+        "type": "object",
+        "properties": {"name": {"type": "string"}},
+        "required": ["name"]
+    }),
+    Tool(name="add_technique", description="Add a new evasion technique", inputSchema={
+        "type": "object",
+        "properties": {
+            "category": {"type": "string"},
+            "name": {"type": "string"},
+            "description": {"type": "string"},
+            "short_name": {"type": "string"},
+            "use_case": {"type": "string"},
+            "requirements": {"type": "string"},
+            "limitations": {"type": "string"}
+        },
+        "required": ["category", "name", "description"]
+    }),
+    Tool(name="add_code_example", description="Add code example to a technique", inputSchema={
+        "type": "object",
+        "properties": {
+            "technique": {"type": "string"},
+            "code": {"type": "string"},
+            "language": {"type": "string", "default": "c"},
+            "title": {"type": "string"},
+            "explanation": {"type": "string"}
+        },
+        "required": ["technique", "code"]
+    }),
+
+    # ==========================================================================
+    # BYOVD Drivers Database (byovd_drivers.db) - NEW Dec 2025
+    # ==========================================================================
+    Tool(name="get_drivers", description="Get list of all vulnerable drivers", inputSchema={
+        "type": "object", "properties": {}
+    }),
+    Tool(name="get_driver_detail", description="Get full driver details with IOCTLs and magic values", inputSchema={
+        "type": "object",
+        "properties": {"name": {"type": "string", "description": "Driver name (e.g., Ld9BoxSup.sys)"}},
+        "required": ["name"]
+    }),
+    Tool(name="get_driver_primitives", description="Get primitives a driver provides", inputSchema={
+        "type": "object",
+        "properties": {"name": {"type": "string"}},
+        "required": ["name"]
+    }),
+    Tool(name="get_driver_ioctls", description="Get all IOCTLs for a driver", inputSchema={
+        "type": "object",
+        "properties": {"name": {"type": "string"}},
+        "required": ["name"]
+    }),
+    Tool(name="get_driver_magic_values", description="Get magic values for driver authentication", inputSchema={
+        "type": "object",
+        "properties": {"name": {"type": "string"}},
+        "required": ["name"]
+    }),
+    Tool(name="check_driver_blocklist", description="Check blocklist status across anti-cheats", inputSchema={
+        "type": "object",
+        "properties": {"name": {"type": "string"}},
+        "required": ["name"]
+    }),
+    Tool(name="get_driver_gotchas", description="Get known issues/gotchas for a driver", inputSchema={
+        "type": "object",
+        "properties": {"name": {"type": "string"}},
+        "required": ["name"]
+    }),
+    Tool(name="search_drivers", description="Search drivers by name, vendor, or notes", inputSchema={
+        "type": "object",
+        "properties": {"query": {"type": "string"}},
+        "required": ["query"]
+    }),
+    Tool(name="find_drivers_with_primitive", description="Find drivers with specific capability", inputSchema={
+        "type": "object",
+        "properties": {"primitive_type": {"type": "string", "description": "phys_read, phys_write, code_exec, msr_access, etc."}},
+        "required": ["primitive_type"]
+    }),
+    Tool(name="add_driver", description="Add a new vulnerable driver to database", inputSchema={
+        "type": "object",
+        "properties": {
+            "name": {"type": "string"},
+            "vendor": {"type": "string"},
+            "device_path": {"type": "string"},
+            "original_name": {"type": "string"},
+            "signer": {"type": "string"},
+            "legitimate_use": {"type": "string"},
+            "notes": {"type": "string"}
+        },
+        "required": ["name", "vendor", "device_path"]
+    }),
+    Tool(name="add_driver_ioctl", description="Add IOCTL to a driver", inputSchema={
+        "type": "object",
+        "properties": {
+            "driver": {"type": "string"},
+            "name": {"type": "string"},
+            "code": {"type": "string"},
+            "description": {"type": "string"},
+            "function_number": {"type": "integer"},
+            "input_size": {"type": "integer"},
+            "output_size": {"type": "integer"}
+        },
+        "required": ["driver", "name", "code", "description"]
+    }),
+    Tool(name="update_driver_blocklist", description="Update blocklist status", inputSchema={
+        "type": "object",
+        "properties": {
+            "driver": {"type": "string"},
+            "anticheat": {"type": "string"},
+            "blocked": {"type": "boolean"},
+            "block_type": {"type": "string"},
+            "notes": {"type": "string"}
+        },
+        "required": ["driver", "anticheat", "blocked"]
+    }),
+    Tool(name="add_driver_gotcha_entry", description="Add a known issue for a driver", inputSchema={
+        "type": "object",
+        "properties": {
+            "driver": {"type": "string"},
+            "symptom": {"type": "string"},
+            "cause": {"type": "string"},
+            "fix": {"type": "string"},
+            "affected_environments": {"type": "string"}
+        },
+        "required": ["driver", "symptom", "cause"]
+    }),
+
+    # ==========================================================================
+    # Semantic Search (ChromaDB) - NEW Dec 2025
+    # ==========================================================================
+    Tool(name="semantic_search", description="Search all MCP databases by meaning (semantic similarity)", inputSchema={
+        "type": "object",
+        "properties": {
+            "query": {"type": "string", "description": "Natural language query"},
+            "collections": {"type": "array", "items": {"type": "string"}, "description": "Optional: specific collections to search"},
+            "n_results": {"type": "integer", "description": "Max results", "default": 10},
+            "filter_type": {"type": "string", "description": "Optional: filter by doc type"}
+        },
+        "required": ["query"]
+    }),
+    Tool(name="rebuild_semantic_index", description="Rebuild semantic search index from all databases", inputSchema={
+        "type": "object", "properties": {}
+    }),
+    Tool(name="get_semantic_index_stats", description="Get semantic index statistics", inputSchema={
+        "type": "object", "properties": {}
+    }),
+
+    # ==========================================================================
+    # MS Learn Reference Database - NEW Dec 2025
+    # ==========================================================================
+    Tool(name="mslearn_search", description="Semantic search across MS Learn Windows kernel documentation", inputSchema={
+        "type": "object",
+        "properties": {
+            "query": {"type": "string", "description": "Search query (natural language or API names)"},
+            "topic": {"type": "string", "description": "Filter by topic (MDL, Physical Memory, Pool Allocation, etc.)"},
+            "concept_type": {"type": "string", "enum": ["overview", "usage", "warning", "example", "api_list"], "description": "Filter by concept type"},
+            "limit": {"type": "integer", "description": "Maximum results", "default": 10}
+        },
+        "required": ["query"]
+    }),
+    Tool(name="mslearn_api", description="Get full API reference details (parameters, return values, usage notes)", inputSchema={
+        "type": "object",
+        "properties": {"name": {"type": "string", "description": "API name (e.g., MmGetMdlPfnArray, IoAllocateMdl)"}},
+        "required": ["name"]
+    }),
+    Tool(name="mslearn_concept", description="Get full concept content by ID", inputSchema={
+        "type": "object",
+        "properties": {"concept_id": {"type": "integer", "description": "Concept ID from search results"}},
+        "required": ["concept_id"]
+    }),
+    Tool(name="mslearn_page", description="Get full MS Learn page content with all concepts", inputSchema={
+        "type": "object",
+        "properties": {"url_or_id": {"type": "string", "description": "Page URL or numeric ID"}},
+        "required": ["url_or_id"]
+    }),
+    Tool(name="mslearn_examples", description="Get code examples from MS Learn docs", inputSchema={
+        "type": "object",
+        "properties": {
+            "topic": {"type": "string", "description": "Filter by topic (e.g., MDL)"},
+            "api_name": {"type": "string", "description": "Filter by API name"},
+            "limit": {"type": "integer", "description": "Maximum examples", "default": 10}
+        }
+    }),
+    Tool(name="mslearn_topics", description="List all ingested documentation topics with page counts", inputSchema={
+        "type": "object", "properties": {}
+    }),
+    Tool(name="mslearn_annotate_concept", description="Add project-specific notes to a concept", inputSchema={
+        "type": "object",
+        "properties": {
+            "concept_id": {"type": "integer", "description": "Concept ID"},
+            "notes": {"type": "string", "description": "Our project-specific notes"}
+        },
+        "required": ["concept_id", "notes"]
+    }),
+    Tool(name="mslearn_annotate_api", description="Add project-specific notes to an API", inputSchema={
+        "type": "object",
+        "properties": {
+            "api_name": {"type": "string", "description": "API name"},
+            "notes": {"type": "string", "description": "Our notes (gotchas, tips, usage patterns)"}
+        },
+        "required": ["api_name", "notes"]
+    }),
+    Tool(name="mslearn_cross_reference", description="Create cross-reference between MS Learn content and our databases", inputSchema={
+        "type": "object",
+        "properties": {
+            "source_type": {"type": "string", "enum": ["api", "concept", "example"]},
+            "source_id": {"type": "integer", "description": "ID in mslearn_reference.db"},
+            "target_db": {"type": "string", "description": "Target database (project_brain, evasion_techniques, etc.)"},
+            "target_type": {"type": "string", "description": "Type of target record (gotcha, technique, detection)"},
+            "target_id": {"type": "string", "description": "ID in target database"},
+            "relationship": {"type": "string", "enum": ["relates_to", "warns_about", "enables", "detected_by"]},
+            "notes": {"type": "string", "description": "Optional notes about the relationship"}
+        },
+        "required": ["source_type", "source_id", "target_db", "target_type", "target_id", "relationship"]
+    }),
+    Tool(name="mslearn_stats", description="Get MS Learn database statistics", inputSchema={
+        "type": "object", "properties": {}
+    }),
+
+    # ==========================================================================
+    # Driver RE Tools (NEW Dec 27, 2025)
+    # ==========================================================================
+    # Driver Management Tools
+    Tool(name="dre_add_driver", description="Add a driver to the database with automatic PE metadata extraction", inputSchema={
+        "type": "object",
+        "properties": {
+            "file_path": {"type": "string", "description": "Path to the driver .sys file"},
+            "analyzed_name": {"type": "string", "description": "Custom name for the driver"},
+            "tags": {"type": "array", "items": {"type": "string"}, "description": "Tags for categorization"},
+            "notes": {"type": "string", "description": "Initial notes"}
+        },
+        "required": ["file_path"]
+    }),
+    Tool(name="dre_get_driver", description="Get driver details by ID, SHA256, or name", inputSchema={
+        "type": "object",
+        "properties": {
+            "driver_id": {"type": "string", "description": "Driver UUID"},
+            "sha256": {"type": "string", "description": "SHA256 hash"},
+            "name": {"type": "string", "description": "Driver name (partial match)"}
+        }
+    }),
+    Tool(name="dre_list_drivers", description="List all analyzed drivers with optional filtering", inputSchema={
+        "type": "object",
+        "properties": {
+            "tags": {"type": "array", "items": {"type": "string"}, "description": "Filter by tags"},
+            "status": {"type": "string", "enum": ["pending", "in_progress", "complete"], "description": "Filter by analysis status"},
+            "limit": {"type": "integer", "default": 50},
+            "offset": {"type": "integer", "default": 0}
+        }
+    }),
+    Tool(name="dre_update_driver_status", description="Update driver analysis status", inputSchema={
+        "type": "object",
+        "properties": {
+            "driver_id": {"type": "string", "description": "Driver UUID"},
+            "status": {"type": "string", "enum": ["pending", "in_progress", "complete"]},
+            "notes": {"type": "string", "description": "Status update notes"}
+        },
+        "required": ["driver_id", "status"]
+    }),
+    Tool(name="dre_delete_driver", description="Delete a driver and all associated data (requires confirmation)", inputSchema={
+        "type": "object",
+        "properties": {
+            "driver_id": {"type": "string", "description": "Driver UUID"},
+            "confirm": {"type": "boolean", "description": "Confirmation flag - must be true to delete"}
+        },
+        "required": ["driver_id"]
+    }),
+
+    # IOCTL Management Tools
+    Tool(name="dre_add_ioctl", description="Add an IOCTL to a driver with automatic code parsing", inputSchema={
+        "type": "object",
+        "properties": {
+            "driver_id": {"type": "string", "description": "Driver UUID"},
+            "name": {"type": "string", "description": "IOCTL name"},
+            "code": {"type": "integer", "description": "IOCTL code (hex)"},
+            "description": {"type": "string"},
+            "handler_rva": {"type": "integer"},
+            "min_input_size": {"type": "integer"},
+            "max_input_size": {"type": "integer"},
+            "min_output_size": {"type": "integer"},
+            "max_output_size": {"type": "integer"},
+            "requires_admin": {"type": "boolean", "default": False},
+            "is_vulnerable": {"type": "boolean", "default": False},
+            "vulnerability_type": {"type": "string"},
+            "vulnerability_severity": {"type": "string", "enum": ["critical", "high", "medium", "low"]},
+            "vulnerability_description": {"type": "string"},
+            "exploitation_notes": {"type": "string"}
+        },
+        "required": ["driver_id", "name"]
+    }),
+    Tool(name="dre_get_ioctl", description="Get IOCTL details by ID or driver+code", inputSchema={
+        "type": "object",
+        "properties": {
+            "ioctl_id": {"type": "string"},
+            "driver_id": {"type": "string"},
+            "name": {"type": "string"},
+            "code": {"type": "integer"}
+        }
+    }),
+    Tool(name="dre_list_ioctls", description="List all IOCTLs for a driver", inputSchema={
+        "type": "object",
+        "properties": {
+            "driver_id": {"type": "string", "description": "Driver UUID"},
+            "vulnerable_only": {"type": "boolean", "default": False},
+            "category": {"type": "string"}
+        },
+        "required": ["driver_id"]
+    }),
+    Tool(name="dre_get_vulnerable_ioctls", description="Get all vulnerable IOCTLs across all drivers", inputSchema={
+        "type": "object",
+        "properties": {
+            "driver_id": {"type": "string", "description": "Optional filter by driver"},
+            "severity": {"type": "string", "enum": ["critical", "high", "medium", "low"]},
+            "vulnerability_type": {"type": "string"}
+        }
+    }),
+    Tool(name="dre_update_ioctl_vulnerability", description="Update IOCTL vulnerability status and details", inputSchema={
+        "type": "object",
+        "properties": {
+            "ioctl_id": {"type": "string"},
+            "is_vulnerable": {"type": "boolean"},
+            "vulnerability_type": {"type": "string"},
+            "vulnerability_severity": {"type": "string", "enum": ["critical", "high", "medium", "low"]},
+            "vulnerability_description": {"type": "string"},
+            "exploitation_notes": {"type": "string"},
+            "cve_ids": {"type": "array", "items": {"type": "string"}}
+        },
+        "required": ["ioctl_id", "is_vulnerable"]
+    }),
+
+    # Import Analysis Tools
+    Tool(name="dre_get_imports", description="Get imports for a driver with filtering", inputSchema={
+        "type": "object",
+        "properties": {
+            "driver_id": {"type": "string"},
+            "dll": {"type": "string", "description": "Filter by DLL name"},
+            "category": {"type": "string", "description": "Filter by category"},
+            "dangerous_only": {"type": "boolean", "default": False}
+        },
+        "required": ["driver_id"]
+    }),
+    Tool(name="dre_get_import_xrefs", description="Get cross-references to an import", inputSchema={
+        "type": "object",
+        "properties": {
+            "import_id": {"type": "string"}
+        },
+        "required": ["import_id"]
+    }),
+    Tool(name="dre_categorize_import", description="Categorize an import and mark security relevance", inputSchema={
+        "type": "object",
+        "properties": {
+            "import_id": {"type": "string"},
+            "category": {"type": "string"},
+            "subcategory": {"type": "string"},
+            "is_dangerous": {"type": "boolean"},
+            "danger_reason": {"type": "string"},
+            "usage_notes": {"type": "string"}
+        },
+        "required": ["import_id", "category"]
+    }),
+    Tool(name="dre_find_dangerous_apis", description="Find all dangerous APIs (imports) for a driver grouped by category", inputSchema={
+        "type": "object",
+        "properties": {
+            "driver_id": {"type": "string"}
+        },
+        "required": ["driver_id"]
+    }),
+
+    # Export Analysis Tools
+    Tool(name="dre_get_exports", description="Get exports for a driver with filtering", inputSchema={
+        "type": "object",
+        "properties": {
+            "driver_id": {"type": "string"},
+            "prefix": {"type": "string", "description": "Filter by prefix (ASM, RT, SUPR0, etc.)"},
+            "category": {"type": "string"},
+            "dangerous_only": {"type": "boolean", "default": False}
+        },
+        "required": ["driver_id"]
+    }),
+    Tool(name="dre_document_export", description="Document an export function with signature and security info", inputSchema={
+        "type": "object",
+        "properties": {
+            "export_id": {"type": "string"},
+            "description": {"type": "string"},
+            "return_type": {"type": "string"},
+            "parameters": {"type": "array", "items": {"type": "object"}},
+            "calling_convention": {"type": "string"},
+            "is_dangerous": {"type": "boolean"},
+            "danger_reason": {"type": "string"},
+            "decompiled_code": {"type": "string"}
+        },
+        "required": ["export_id"]
+    }),
 ]
 
 TOOL_HANDLERS = {
@@ -1508,6 +2152,23 @@ TOOL_HANDLERS = {
     "ld9boxsup_ioctl_guide": ld9boxsup_ioctl_guide,
     "generate_driver_wrapper": generate_driver_wrapper,
     "generate_hypervisor_loader": generate_hypervisor_loader,
+    # Driver Mapper
+    "get_pe_parsing_guide": get_pe_parsing_guide,
+    "get_import_resolution_guide": get_import_resolution_guide,
+    "get_relocation_guide": get_relocation_guide,
+    "get_memory_allocation_guide": get_memory_allocation_guide,
+    "get_cleanup_guide": get_cleanup_guide,
+    "get_syscall_hook_guide": get_syscall_hook_guide,
+    "validate_driver_binary": validate_driver_binary,
+    "generate_mapping_checklist": generate_mapping_checklist,
+    # HVCI Bypass
+    "get_zerohvci_architecture": get_zerohvci_architecture,
+    "get_hypercall_protocol": get_hypercall_protocol,
+    "get_hyperv_hijack_concepts": get_hyperv_hijack_concepts,
+    "get_phase_implementation_guide": get_phase_implementation_guide,
+    "get_detection_mitigation": get_detection_mitigation,
+    "get_build_integration_guide": get_build_integration_guide,
+    "get_amd_vs_intel_considerations": get_amd_vs_intel_considerations,
     # Project Brain
     "get_project_status": get_project_status,
     "get_findings": get_findings,
@@ -1534,6 +2195,106 @@ TOOL_HANDLERS = {
     "suggest_next_work": suggest_next_work,
     "verify_concept": verify_concept,
     "dismiss_concept_finding": dismiss_concept_finding,
+    # Vergilius - Windows Kernel Structures
+    "get_structure": get_structure,
+    "get_field_offset": get_field_offset,
+    "compare_versions": compare_versions,
+    "get_hypervisor_offsets": get_hypervisor_offsets,
+    "find_field_usage": find_field_usage,
+    "list_structures": list_structures,
+    "list_versions": list_versions,
+    "generate_offsets_header": generate_offsets_header,
+
+    # ==========================================================================
+    # Anti-Cheat Intel Database (NEW Dec 2025)
+    # ==========================================================================
+    "get_anticheat_list": anticheat_db.get_anticheat_list,
+    "get_detection_methods": anticheat_db.get_detection_methods,
+    "get_detection_method_detail": anticheat_db.get_detection_method_detail,
+    "get_bypasses_for_anticheat": anticheat_db.get_bypasses_for_anticheat,
+    "get_timing_thresholds_db": anticheat_db.get_timing_thresholds,
+    "get_signatures": anticheat_db.get_signatures,
+    "search_detections": anticheat_db.search_detections,
+    "add_detection_method": anticheat_db.add_detection_method,
+    "add_bypass": anticheat_db.add_bypass,
+
+    # ==========================================================================
+    # Evasion Techniques Database (NEW Dec 2025)
+    # ==========================================================================
+    "get_evasion_categories": evasion_db.get_categories,
+    "get_techniques": evasion_db.get_techniques,
+    "get_technique_detail": evasion_db.get_technique_detail,
+    "get_bypass_chains": evasion_db.get_bypass_chains,
+    "get_bypass_chain": evasion_db.get_bypass_chain,
+    "get_cleanup_procedures": evasion_db.get_cleanup_procedures,
+    "get_cleanup_procedure": evasion_db.get_cleanup_procedure,
+    "add_technique": evasion_db.add_technique,
+    "add_code_example": evasion_db.add_code_example,
+
+    # ==========================================================================
+    # BYOVD Drivers Database (NEW Dec 2025)
+    # ==========================================================================
+    "get_drivers": byovd_db.get_drivers,
+    "get_driver_detail": byovd_db.get_driver,
+    "get_driver_primitives": byovd_db.get_driver_primitives,
+    "get_driver_ioctls": byovd_db.get_driver_ioctls,
+    "get_driver_magic_values": byovd_db.get_magic_values,
+    "check_driver_blocklist": byovd_db.check_blocklist_status,
+    "get_driver_gotchas": byovd_db.get_driver_gotchas,
+    "search_drivers": byovd_db.search_drivers,
+    "find_drivers_with_primitive": byovd_db.find_drivers_with_primitive,
+    "add_driver": byovd_db.add_driver,
+    "add_driver_ioctl": byovd_db.add_ioctl,
+    "update_driver_blocklist": byovd_db.update_blocklist_status,
+    "add_driver_gotcha_entry": byovd_db.add_driver_gotcha,
+
+    # ==========================================================================
+    # Semantic Search (NEW Dec 2025)
+    # ==========================================================================
+    "semantic_search": semantic_search.semantic_search,
+    "rebuild_semantic_index": semantic_search.rebuild_semantic_index,
+    "get_semantic_index_stats": semantic_search.get_semantic_index_stats,
+
+    # ==========================================================================
+    # MS Learn Reference Database (NEW Dec 2025)
+    # ==========================================================================
+    "mslearn_search": mslearn_db.mslearn_search,
+    "mslearn_api": mslearn_db.mslearn_api,
+    "mslearn_concept": mslearn_db.mslearn_concept,
+    "mslearn_page": mslearn_db.mslearn_page,
+    "mslearn_examples": mslearn_db.mslearn_examples,
+    "mslearn_topics": mslearn_db.mslearn_topics,
+    "mslearn_annotate_concept": mslearn_db.mslearn_annotate_concept,
+    "mslearn_annotate_api": mslearn_db.mslearn_annotate_api,
+    "mslearn_cross_reference": mslearn_db.mslearn_cross_reference,
+    "mslearn_stats": mslearn_db.mslearn_stats,
+
+    # ==========================================================================
+    # Driver RE Tools (NEW Dec 27, 2025)
+    # ==========================================================================
+    # Driver Tools
+    "dre_add_driver": driver_tools.add_driver,
+    "dre_get_driver": driver_tools.get_driver,
+    "dre_list_drivers": driver_tools.list_drivers,
+    "dre_update_driver_status": driver_tools.update_driver_status,
+    "dre_delete_driver": driver_tools.delete_driver,
+
+    # IOCTL Tools
+    "dre_add_ioctl": ioctl_tools.add_ioctl,
+    "dre_get_ioctl": ioctl_tools.get_ioctl,
+    "dre_list_ioctls": ioctl_tools.list_ioctls,
+    "dre_get_vulnerable_ioctls": ioctl_tools.get_vulnerable_ioctls,
+    "dre_update_ioctl_vulnerability": ioctl_tools.update_ioctl_vulnerability,
+
+    # Import Analysis Tools
+    "dre_get_imports": import_tools.get_imports,
+    "dre_get_import_xrefs": import_tools.get_import_xrefs,
+    "dre_categorize_import": import_tools.categorize_import,
+    "dre_find_dangerous_apis": import_tools.find_dangerous_apis,
+
+    # Export Analysis Tools
+    "dre_get_exports": export_tools.get_exports,
+    "dre_document_export": export_tools.document_export,
 }
 
 @app.list_tools()
@@ -1544,10 +2305,16 @@ async def list_tools() -> list[Tool]:
 async def call_tool(name: str, arguments: dict) -> list[TextContent]:
     if name not in TOOL_HANDLERS:
         raise ValueError(f"Unknown tool: {name}")
-    
+
     handler = TOOL_HANDLERS[name]
-    result = await handler(**arguments)
-    
+
+    # Handle both sync and async functions
+    import inspect
+    if inspect.iscoroutinefunction(handler):
+        result = await handler(**arguments)
+    else:
+        result = handler(**arguments)
+
     if isinstance(result, str):
         return [TextContent(type="text", text=result)]
     else:

@@ -1,0 +1,43 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "project-mcp"
+version = "1.0.0"
+description = "OMBRA Project Management MCP Server - External Brain for Agent Intelligence"
+readme = "README.md"
+requires-python = ">=3.10"
+license = {text = "MIT"}
+authors = [
+    {name = "ENI", email = "eni@ombra.dev"}
+]
+keywords = ["mcp", "project-management", "codebase-analysis", "hypervisor"]
+
+dependencies = [
+    "mcp>=1.0.0",
+    "pydantic>=2.0.0",
+    "aiosqlite>=0.19.0",
+    "chromadb>=0.4.0",
+    "watchdog>=4.0.0",
+    "tree-sitter>=0.21.0",
+    "tree-sitter-c>=0.21.0",
+]
+
+[project.optional-dependencies]
+dashboard = [
+    "fastapi>=0.109.0",
+    "uvicorn>=0.27.0",
+    "websockets>=12.0",
+]
+dev = [
+    "pytest>=8.0.0",
+    "pytest-asyncio>=0.23.0",
+]
+
+[project.scripts]
+project-mcp = "project_mcp.server:main"
+project-dashboard = "project_mcp.dashboard:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/project_mcp"]

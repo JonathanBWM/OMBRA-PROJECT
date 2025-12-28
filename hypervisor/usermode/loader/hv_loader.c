@@ -155,8 +155,8 @@ static BOOL Apply618Bypass(void) {
 // =============================================================================
 
 static BOOL AllocateHypervisorImage(HV_LOADER_CTX* ctx, U32 hvImageSize) {
-    // NOTE: -618 bypass is now applied in HvLoaderInit() BEFORE driver start
-    // This ensures DriverEntry's IoCreateDevice succeeds
+    // NOTE: -618 bypass is applied in HvLoaderLoad() BEFORE this function.
+    // The guard flags are patched so LDR_OPEN's module parsing check passes.
 
     // LDR_OPEN: request kernel memory for image
     void* imageBase = NULL;
@@ -224,12 +224,9 @@ BOOL HvLoaderInit(HV_LOADER_CTX* ctx, const wchar_t* driverPath) {
     }
     printf("[+] Driver service installed\n");
 
-    // Step 2: Apply -618 bypass BEFORE starting driver
-    // This patches validation flags so DriverEntry's IoCreateDevice succeeds
-    printf("[*] Applying -618 bypass before driver start...\n");
-    Apply618Bypass();
-
-    // Step 3: NOW start the driver (validation flags are patched)
+    // Step 2: Start driver service
+    // NOTE: -618 bypass is applied in HvLoaderLoad BEFORE LDR_OPEN, not here.
+    // The -618 check happens in LDR_OPEN, not in DriverEntry.
     printf("[*] Starting driver service...\n");
     status = DrvStartDriver(&ctx->Driver);
     if (status != DRV_SUCCESS) {
@@ -314,14 +311,20 @@ BOOL HvLoaderLoad(HV_LOADER_CTX* ctx, const void* hvImage, U32 hvImageSize) {
         // Continue anyway - maybe legacy params are set up differently
     }
 
-    // 5. Allocate kernel memory for hypervisor
+    // 5. Apply -618 bypass NOW (driver is loaded, we can find its base)
+    // The -618 check is in LDR_OPEN, not DriverEntry. We must patch the guard
+    // flags AFTER the driver is loaded but BEFORE calling LDR_OPEN.
+    printf("[*] Applying -618 bypass before LDR_OPEN...\n");
+    Apply618Bypass();
+
+    // 6. Allocate kernel memory for hypervisor (calls LDR_OPEN)
     printf("[*] Allocating kernel memory for hypervisor...\n");
     if (!AllocateHypervisorImage(ctx, hvImageSize)) {
         free(hvImageCopy);
         return FALSE;
     }
 
-    // 6. Apply relocations to the image copy based on new kernel base
+    // 7. Apply relocations to the image copy based on new kernel base
     // Update peInfo.ImageBase to reflect the new kernel address
     printf("[*] Applying PE relocations (delta from 0x%llX to 0x%p)...\n",
            peInfo.ImageBase, ctx->ImageBase);
@@ -336,7 +339,7 @@ BOOL HvLoaderLoad(HV_LOADER_CTX* ctx, const void* hvImage, U32 hvImageSize) {
     }
     printf("[+] Relocations applied successfully\n");
 
-    // 7. Execute hypervisor entry point (OmbraModuleInit)
+    // 8. Execute hypervisor entry point (OmbraModuleInit)
     // MmGetSystemRoutineAddress is already in .ombra section
     printf("[*] Executing OmbraModuleInit...\n");
     if (!ExecuteHypervisorEntry(ctx, hvImageCopy, hvImageSize, &peInfo)) {
