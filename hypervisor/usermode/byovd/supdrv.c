@@ -509,12 +509,15 @@ bool SupDrv_GetSymbol(PSUPDRV_CTX ctx, const char* szSymbol, void** ppvSymbol) {
 
     DbgLog("SupDrv_GetSymbol: Looking up '%s'", szSymbol);
 
-    // Local structure - matches supdrv_types.h patterns
+    // Structure layout from Ghidra analysis of Ld9BoxSup.sys IOCTL handler:
+    // - cbIn = 0x60 (96 bytes), cbOut = 0x20 (32 bytes)
+    // - szSymbol at offset 0x20, max 0x40 (64) bytes
+    // Layout: SUPREQHDR (24) + pvImageBase (8) + szSymbol (64) = 96 bytes
     struct {
-        SUPREQHDR Hdr;
-        void* pvImageBase;
-        char szSymbol[128];
-    } reqIn;
+        SUPREQHDR Hdr;          // 24 bytes (offset 0x00-0x17)
+        void* pvImageBase;       // 8 bytes  (offset 0x18-0x1F)
+        char szSymbol[64];       // 64 bytes (offset 0x20-0x5F) - MUST be 64, not 128!
+    } reqIn;  // Total: 96 bytes (0x60)
 
     struct {
         SUPREQHDR Hdr;
@@ -523,6 +526,10 @@ bool SupDrv_GetSymbol(PSUPDRV_CTX ctx, const char* szSymbol, void** ppvSymbol) {
 
     memset(&reqIn, 0, sizeof(reqIn));
     memset(&reqOut, 0, sizeof(reqOut));
+
+    // Verify structure sizes match Ghidra-discovered values
+    DbgLog("SupDrv_GetSymbol: sizeof(reqIn)=%zu (expected 96), sizeof(reqOut)=%zu (expected 32)",
+           sizeof(reqIn), sizeof(reqOut));
 
     SupDrv_FillHeader(ctx, &reqIn.Hdr, sizeof(reqIn), sizeof(reqOut));
     reqIn.pvImageBase = NULL;  // NULL = ntoskrnl
