@@ -54,7 +54,7 @@ jobs:
           main.c driver_interface.c payload_loader.c loader_api.c debug_reader.c ^
           loader/hv_loader.c loader/pe_parser.c loader/pe_mapper.c ^
           loader/pe_relocs.c loader/pe_iat.c loader/pe_imports.c ^
-          loader/pe_utils.c loader/pe_wipe.c loader/drv_loader.c ^
+          loader/pe_utils.c loader/pe_wipe.c loader/drv_loader.c loader/cleanup.c ^
           byovd/supdrv.c byovd/deployer.c byovd/crypto.c byovd/nt_helpers.c byovd/throttlestop.c ^
           tests/detection_baseline.c ^
           /I../shared /I. ^

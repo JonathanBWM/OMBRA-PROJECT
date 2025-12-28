@@ -86,11 +86,22 @@ typedef struct _TS_WRITE_REQ_1 {
 
 #pragma pack(pop)
 
-// Verify structure sizes
-_Static_assert(sizeof(TS_WRITE_REQ_8) == 16, "TS_WRITE_REQ_8 must be 16 bytes");
-_Static_assert(sizeof(TS_WRITE_REQ_4) == 12, "TS_WRITE_REQ_4 must be 12 bytes");
-_Static_assert(sizeof(TS_WRITE_REQ_2) == 10, "TS_WRITE_REQ_2 must be 10 bytes");
-_Static_assert(sizeof(TS_WRITE_REQ_1) == 9,  "TS_WRITE_REQ_1 must be 9 bytes");
+// Verify structure sizes at compile time
+#if defined(_MSC_VER) && !defined(__cplusplus)
+// MSVC C mode: use C11 static_assert which MSVC supports
+#define TS_STATIC_ASSERT(cond, msg) static_assert(cond, msg)
+#elif defined(__STDC_VERSION__) && __STDC_VERSION__ >= 201112L
+// C11: use _Static_assert
+#define TS_STATIC_ASSERT(cond, msg) _Static_assert(cond, msg)
+#else
+// Fallback: compile-time check using negative array size
+#define TS_STATIC_ASSERT(cond, msg) typedef char static_assertion_##__LINE__[(cond)?1:-1]
+#endif
+
+TS_STATIC_ASSERT(sizeof(TS_WRITE_REQ_8) == 16, "TS_WRITE_REQ_8 must be 16 bytes");
+TS_STATIC_ASSERT(sizeof(TS_WRITE_REQ_4) == 12, "TS_WRITE_REQ_4 must be 12 bytes");
+TS_STATIC_ASSERT(sizeof(TS_WRITE_REQ_2) == 10, "TS_WRITE_REQ_2 must be 10 bytes");
+TS_STATIC_ASSERT(sizeof(TS_WRITE_REQ_1) == 9,  "TS_WRITE_REQ_1 must be 9 bytes");
 
 //=============================================================================
 // Page Table Constants (for VA->PA translation)
