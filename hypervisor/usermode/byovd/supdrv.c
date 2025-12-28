@@ -340,7 +340,12 @@ bool SupDrv_LdrOpen(PSUPDRV_CTX ctx, UINT32 cbImage, void** ppvImageBase) {
     req.u.In.cbImageWithTabs = cbAligned + 0x1000;  // Add 1 page for tabs/metadata
     req.u.In.cbImageBits = cbImage;                 // Actual image size (must be < cbImageWithTabs)
     GetModuleName(req.u.In.szName, sizeof(req.u.In.szName));
-    GetModulePath(req.u.In.szFilename, sizeof(req.u.In.szFilename));
+    // Use existing system file to trigger different error code
+    // Native loader path returns -610 for non-existent files (STATUS_OBJECT_NAME_NOT_FOUND)
+    // But fallback only triggers on -37. Try using existing file for different status.
+    // DEBUG: Test with ntdll.dll (exists, not a driver, should return different error)
+    strncpy_s(req.u.In.szFilename, sizeof(req.u.In.szFilename),
+              "C:\\Windows\\System32\\ntdll.dll", _TRUNCATE);
 
     // DEBUG: Print request structure
     DbgLog("[DEBUG LDR_OPEN] Request structure:");
