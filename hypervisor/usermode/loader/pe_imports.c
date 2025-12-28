@@ -31,8 +31,8 @@ static bool IsKernelModule(const char* moduleName) {
             _stricmp(moduleName, "ntkrnlmp.exe") == 0);
 }
 
-bool ResolveImports(DRV_CONTEXT* drv, PE_INFO* peInfo) {
-    if (!drv || !peInfo || !peInfo->Valid) {
+bool ResolveImports(PSUPDRV_CTX ctx, PE_INFO* peInfo) {
+    if (!ctx || !peInfo || !peInfo->Valid) {
         printf("[-] ResolveImports: invalid parameters\n");
         return false;
     }
@@ -60,9 +60,9 @@ bool ResolveImports(DRV_CONTEXT* drv, PE_INFO* peInfo) {
         const char* lookupName = imp->FunctionName;
 
         void* addr = NULL;
-        DRV_STATUS status = DrvGetSymbol(drv, lookupName, &addr);
+        bool success = SupDrv_GetSymbol(ctx, lookupName, &addr);
 
-        if (status == DRV_SUCCESS && addr != NULL) {
+        if (success && addr != NULL) {
             imp->ResolvedAddress = (uint64_t)addr;
             resolved++;
 
@@ -72,8 +72,8 @@ bool ResolveImports(DRV_CONTEXT* drv, PE_INFO* peInfo) {
                        imp->ModuleName, imp->FunctionName, imp->ResolvedAddress);
             }
         } else {
-            printf("[-] Failed to resolve %s!%s (status=%d)\n",
-                   imp->ModuleName, imp->FunctionName, status);
+            printf("[-] Failed to resolve %s!%s\n",
+                   imp->ModuleName, imp->FunctionName);
             failed++;
         }
     }
@@ -90,8 +90,8 @@ bool ResolveImports(DRV_CONTEXT* drv, PE_INFO* peInfo) {
     return true;
 }
 
-bool ResolveCommonSymbols(DRV_CONTEXT* drv, COMMON_SYMBOLS* syms) {
-    if (!drv || !syms) {
+bool ResolveCommonSymbols(PSUPDRV_CTX ctx, COMMON_SYMBOLS* syms) {
+    if (!ctx || !syms) {
         printf("[-] ResolveCommonSymbols: invalid parameters\n");
         return false;
     }
@@ -130,9 +130,9 @@ bool ResolveCommonSymbols(DRV_CONTEXT* drv, COMMON_SYMBOLS* syms) {
         const char* name = COMMON_IMPORTS[i];
         void* addr = NULL;
 
-        DRV_STATUS status = DrvGetSymbol(drv, name, &addr);
+        bool success = SupDrv_GetSymbol(ctx, name, &addr);
 
-        if (status == DRV_SUCCESS && addr != NULL) {
+        if (success && addr != NULL) {
             *symPtrs[i] = (uint64_t)addr;
             resolved++;
 

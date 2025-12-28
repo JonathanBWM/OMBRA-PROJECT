@@ -4,7 +4,7 @@
 #include <stdint.h>
 #include <stdbool.h>
 #include "pe_parser.h"
-#include "../driver_interface.h"
+#include "../byovd/supdrv.h"
 
 // Common kernel symbols that OmbraDriver might need
 typedef struct _COMMON_SYMBOLS {
@@ -28,7 +28,7 @@ typedef struct _COMMON_SYMBOLS {
     uint64_t MmUnmapIoSpace;
 } COMMON_SYMBOLS;
 
-bool ResolveImports(DRV_CONTEXT* drv, PE_INFO* peInfo);
-bool ResolveCommonSymbols(DRV_CONTEXT* drv, COMMON_SYMBOLS* syms);
+bool ResolveImports(PSUPDRV_CTX ctx, PE_INFO* peInfo);
+bool ResolveCommonSymbols(PSUPDRV_CTX ctx, COMMON_SYMBOLS* syms);
 
 #endif
