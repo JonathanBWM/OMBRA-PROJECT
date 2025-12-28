@@ -332,8 +332,13 @@ bool SupDrv_LdrOpen(PSUPDRV_CTX ctx, UINT32 cbImage, void** ppvImageBase) {
     memset(&req, 0, sizeof(req));
     SupDrv_FillHeader(ctx, &req.Hdr, LDR_OPEN_SIZE_IN, LDR_OPEN_SIZE_OUT);
 
-    req.u.In.cbImageWithTabs = cbImage;
-    req.u.In.cbImageBits = cbImage;
+    // CRITICAL: Driver requires cbImageBits < cbImageWithTabs (Ghidra analysis Dec 2025)
+    // cbImageWithTabs = total allocation size (page-aligned + buffer for metadata)
+    // cbImageBits = actual image data size
+    // The driver checks: if (cbImageBits >= cbImageWithTabs) return error 87
+    UINT32 cbAligned = (cbImage + 0xFFF) & ~0xFFF;  // Page-align
+    req.u.In.cbImageWithTabs = cbAligned + 0x1000;  // Add 1 page for tabs/metadata
+    req.u.In.cbImageBits = cbImage;                 // Actual image size (must be < cbImageWithTabs)
     GetModuleName(req.u.In.szName, sizeof(req.u.In.szName));
     GetModulePath(req.u.In.szFilename, sizeof(req.u.In.szFilename));
 
@@ -395,7 +400,9 @@ bool SupDrv_LdrLoad(PSUPDRV_CTX ctx, void* pvImageBase, const void* pvImage,
     SupDrv_FillHeader(ctx, &pLoad->Hdr, cbIn, cbOut);
 
     pLoad->u.In.pvImageBase = pvImageBase;
-    pLoad->u.In.cbImageWithTabs = cbImage;
+    // Match the allocation sizes from LDR_OPEN (cbImageBits < cbImageWithTabs)
+    UINT32 cbAligned = (cbImage + 0xFFF) & ~0xFFF;
+    pLoad->u.In.cbImageWithTabs = cbAligned + 0x1000;
     pLoad->u.In.cbImageBits = cbImage;
     pLoad->u.In.offSymbols = 0;
     pLoad->u.In.cSymbols = 0;
