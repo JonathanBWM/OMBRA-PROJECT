@@ -16,7 +16,7 @@
 // Device Path
 // =============================================================================
 
-#define LD9BOXSUP_DEVICE_PATH   L"\\\\.\\Ld9BoxSup"
+#define LD9BOXSUP_DEVICE_PATH   L"\\\\.\\Ld9BoxDrv"
 #define LD9BOXSUP_SERVICE_NAME  L"Ld9BoxSup"
 
 // =============================================================================
