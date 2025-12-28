@@ -424,6 +424,11 @@ int main(int argc, char* argv[]) {
     } else {
         LOG("[+] VERIFIED: ThrottleStop.sys is embedded\n");
     }
+    if (!Resource_Exists(EMBEDDED_PAYLOAD_HYPERVISOR)) {
+        LOG("[!] WARNING: hypervisor.sys NOT embedded - will try disk fallback\n");
+    } else {
+        LOG("[+] VERIFIED: hypervisor.sys is embedded\n");
+    }
 
     // Run BigPool test if requested
     if (runBigPoolTest) {
@@ -446,16 +451,36 @@ int main(int argc, char* argv[]) {
         return 1;
     }
 
-    // Load payload
+    // Extract hypervisor from embedded resources (correct path)
     size_t payloadSize = 0;
-    const char* payloadFile = GetPayloadFilename();
-    void* payload = LoadPayload(payloadFile, &payloadSize);
+    void* payload = NULL;
+
+    // FIRST: Try embedded resource
+    if (Resource_Exists(EMBEDDED_PAYLOAD_HYPERVISOR)) {
+        payload = Resource_ExtractToMemory(EMBEDDED_PAYLOAD_HYPERVISOR, &payloadSize);
+        if (payload) {
+            LOG("[+] Extracted hypervisor from embedded resources (%zu bytes)\n", payloadSize);
+        } else {
+            LOG("[!] Hypervisor resource exists but extraction failed\n");
+        }
+    }
+
+    // FALLBACK: Try disk file (development/debug only)
     if (!payload) {
-        printf("[-] Failed to load payload\n");
-        printf("[!] Ensure payload file is in the same directory as this executable\n");
+        LOG("[!] WARNING: No embedded hypervisor, trying disk file fallback\n");
+        const char* payloadFile = GetPayloadFilename();
+        payload = LoadPayload(payloadFile, &payloadSize);
+        if (payload) {
+            LOG("[!] Using disk-based payload (dev mode): %zu bytes\n", payloadSize);
+        }
+    }
+
+    if (!payload) {
+        LOG("[-] Failed to load hypervisor payload\n");
+        LOG("[!] Build error: No embedded resource AND no disk file found\n");
+        LogShutdown();
         return 1;
     }
-    printf("[+] Loaded payload: %zu bytes\n", payloadSize);
 
     // Initialize loader context
     HV_LOADER_CTX hvCtx = {0};
