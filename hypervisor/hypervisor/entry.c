@@ -26,6 +26,8 @@
 #define HV_DEBUG_BUFFER_SIZE    0x10000     // 64KB debug buffer
 #define HV_EPT_PAGES            512         // EPT table pages
 #define HV_MAX_CPUS             256
+#define HV_SPLIT_POOL_COUNT     32          // Pre-allocated pools for EPT splitting (memhv pattern)
+#define HV_SPLIT_POOL_SIZE      0x1000      // 4KB per split pool
 
 // =============================================================================
 // Global State
@@ -81,6 +83,23 @@ typedef struct _HV_RESOURCES {
     // Counts
     U32     CpuCount;
     bool    Allocated;
+
+    // Pre-allocated split pools (memhv pattern)
+    // Used for on-demand EPT page table allocation during runtime
+    // Avoids calling kernel allocator during EPT violation handling
+    void*   SplitPools[HV_SPLIT_POOL_COUNT];
+    U64     SplitPoolsPhys[HV_SPLIT_POOL_COUNT];
+    volatile U32 SplitPoolIndex;
+    U32     SplitPoolCount;
+
+    // Runtime kernel offsets (cross-version compatibility)
+    struct {
+        U64     UniqueProcessId;        // EPROCESS.UniqueProcessId offset
+        U64     ActiveProcessLinks;     // EPROCESS.ActiveProcessLinks offset
+        U64     DirectoryTableBase;     // EPROCESS.DirectoryTableBase offset
+        U64     ImageFileName;          // EPROCESS.ImageFileName offset
+        bool    Discovered;
+    } Offsets;
 } HV_RESOURCES;
 
 static HV_RESOURCES g_Resources = {0};
@@ -135,6 +154,39 @@ static void ReadVmxCapabilities(void) {
 static void ZeroMem(void* dst, U64 size) {
     U8* p = (U8*)dst;
     while (size--) *p++ = 0;
+}
+
+// =============================================================================
+// Get Next Pre-allocated Split Pool (memhv pattern)
+// =============================================================================
+//
+// Returns the next available pre-allocated pool for EPT page table allocation.
+// This avoids calling kernel allocator during EPT violation handling.
+// Thread-safe via interlocked increment.
+//
+// Returns: Virtual address of 4KB pool, or NULL if exhausted
+
+void* GetPreallocatedPool(U64* outPhysical) {
+    U32 index = (U32)_InterlockedIncrement((volatile long*)&g_Resources.SplitPoolIndex) - 1;
+
+    if (index >= g_Resources.SplitPoolCount) {
+        // Pool exhausted - caller should fall back to EPT's contiguous pool
+        if (outPhysical) *outPhysical = 0;
+        return NULL;
+    }
+
+    if (outPhysical) {
+        *outPhysical = g_Resources.SplitPoolsPhys[index];
+    }
+
+    return g_Resources.SplitPools[index];
+}
+
+// Get count of remaining pre-allocated pools
+U32 GetPreallocatedPoolsRemaining(void) {
+    U32 used = g_Resources.SplitPoolIndex;
+    if (used >= g_Resources.SplitPoolCount) return 0;
+    return g_Resources.SplitPoolCount - used;
 }
 
 // =============================================================================
@@ -217,6 +269,23 @@ static OMBRA_STATUS AllocateResources(void) {
         g_Resources.BlankPagePhys = KernelGetPhysicalAddress(g_Resources.BlankPage);
     }
 
+    // Pre-allocate split pools (memhv pattern)
+    // These avoid runtime allocation during EPT violation handling
+    g_Resources.SplitPoolCount = 0;
+    g_Resources.SplitPoolIndex = 0;
+    for (U32 i = 0; i < HV_SPLIT_POOL_COUNT; i++) {
+        g_Resources.SplitPools[i] = KernelAllocateContiguous(HV_SPLIT_POOL_SIZE);
+        if (g_Resources.SplitPools[i]) {
+            ZeroMem(g_Resources.SplitPools[i], HV_SPLIT_POOL_SIZE);
+            g_Resources.SplitPoolsPhys[i] = KernelGetPhysicalAddress(g_Resources.SplitPools[i]);
+            g_Resources.SplitPoolCount++;
+        } else {
+            // Partial allocation is OK, just track how many we got
+            break;
+        }
+    }
+    // Note: Split pools are optional - EPT has its own contiguous pool as fallback
+
     // Write revision ID to all VMXON regions
     U32 revisionId = (U32)(g_Resources.VmxBasic & 0x7FFFFFFF);
     for (U32 i = 0; i < cpuCount; i++) {
@@ -244,6 +313,14 @@ static void FreeResources(void) {
     if (g_Resources.MsrBitmap) KernelFreeContiguous(g_Resources.MsrBitmap);
     if (g_Resources.EptTables) KernelFreeContiguous(g_Resources.EptTables);
     if (g_Resources.BlankPage) KernelFreeContiguous(g_Resources.BlankPage);
+
+    // Free pre-allocated split pools
+    for (U32 i = 0; i < g_Resources.SplitPoolCount; i++) {
+        if (g_Resources.SplitPools[i]) {
+            KernelFreeContiguous(g_Resources.SplitPools[i]);
+        }
+    }
+
     // Debug buffer uses ExAllocatePool, would need ExFreePool
 
     ZeroMem(&g_Resources, sizeof(g_Resources));

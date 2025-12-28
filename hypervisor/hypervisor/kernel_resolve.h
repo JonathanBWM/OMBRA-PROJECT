@@ -204,4 +204,31 @@ U32 KernelGetProcessorCount(void);
 // Execute callback on each processor
 NTSTATUS KernelExecuteOnEachProcessor(NTSTATUS(*callback)(PVOID), PVOID context);
 
+// =============================================================================
+// EPROCESS Offset Discovery (Cross-Version Compatibility)
+// =============================================================================
+
+// Structure to hold discovered kernel offsets
+typedef struct _KERNEL_OFFSETS {
+    U64     UniqueProcessId;        // EPROCESS.UniqueProcessId offset
+    U64     ActiveProcessLinks;     // EPROCESS.ActiveProcessLinks offset
+    U64     DirectoryTableBase;     // EPROCESS.DirectoryTableBase (KPROCESS+0x28)
+    U64     ImageFileName;          // EPROCESS.ImageFileName offset
+    bool    Discovered;
+} KERNEL_OFFSETS;
+
+// Global offsets table
+extern KERNEL_OFFSETS g_KernelOffsets;
+
+// Discover EPROCESS offsets by pattern scanning kernel functions
+// This should be called after KernelResolveSymbols() succeeds
+NTSTATUS KernelDiscoverOffsets(void);
+
+// Accessor functions for individual offsets
+// These will auto-discover if not already done
+U64 KernelGetUniqueProcessIdOffset(void);
+U64 KernelGetActiveProcessLinksOffset(void);
+U64 KernelGetDirectoryTableBaseOffset(void);
+U64 KernelGetImageFileNameOffset(void);
+
 #endif // KERNEL_RESOLVE_H

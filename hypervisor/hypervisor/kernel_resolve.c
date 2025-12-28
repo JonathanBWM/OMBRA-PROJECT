@@ -261,3 +261,98 @@ NTSTATUS KernelExecuteOnEachProcessor(NTSTATUS(*callback)(PVOID), PVOID context)
 
     return STATUS_SUCCESS;
 }
+
+// =============================================================================
+// EPROCESS Offset Discovery (Cross-Version Compatibility)
+// =============================================================================
+//
+// Discovers EPROCESS structure offsets at runtime by pattern scanning
+// kernel functions. This allows the hypervisor to work across different
+// Windows versions without hardcoded offsets.
+//
+// Patterns used:
+// - PsGetProcessId:     mov rax, [rcx + XX] -> UniqueProcessId offset
+// - PsGetProcessPeb:    mov rax, [rcx + XX] -> Peb offset (can derive others)
+// - ActiveProcessLinks: UniqueProcessId + 8 (always follows UniqueProcessId)
+
+// Global offset storage
+KERNEL_OFFSETS g_KernelOffsets = {0};
+
+// Pattern: 48 8B 81 XX XX XX XX  (mov rax, [rcx+disp32])
+// Pattern: 48 8B 41 XX           (mov rax, [rcx+disp8])
+static bool ScanForMovRaxRcxDisp(PVOID function, U32 maxScan, U64* outOffset) {
+    U8* code = (U8*)function;
+
+    for (U32 i = 0; i < maxScan - 7; i++) {
+        // Check for REX.W prefix (48)
+        if (code[i] != 0x48) continue;
+
+        // MOV r64, [r64+disp32]: 48 8B 81 XX XX XX XX
+        if (code[i+1] == 0x8B && code[i+2] == 0x81) {
+            *outOffset = *(U32*)&code[i+3];
+            return true;
+        }
+
+        // MOV r64, [r64+disp8]: 48 8B 41 XX
+        if (code[i+1] == 0x8B && code[i+2] == 0x41) {
+            *outOffset = (U64)code[i+3];
+            return true;
+        }
+    }
+
+    return false;
+}
+
+NTSTATUS KernelDiscoverOffsets(void) {
+    PVOID psGetProcessId;
+    U64 uniqueProcessIdOffset = 0;
+
+    if (g_KernelOffsets.Discovered) {
+        return STATUS_SUCCESS;
+    }
+
+    // Default offsets for Windows 10 22H2 / Windows 11 (fallback)
+    g_KernelOffsets.UniqueProcessId = 0x440;
+    g_KernelOffsets.ActiveProcessLinks = 0x448;
+    g_KernelOffsets.DirectoryTableBase = 0x28;
+    g_KernelOffsets.ImageFileName = 0x5A8;
+
+    // Try to resolve PsGetProcessId for dynamic discovery
+    psGetProcessId = KernelResolveSymbol(L"PsGetProcessId");
+    if (psGetProcessId) {
+        // Scan the function prologue for the offset load
+        // PsGetProcessId is: mov rax, [rcx+UniqueProcessId]; ret
+        if (ScanForMovRaxRcxDisp(psGetProcessId, 32, &uniqueProcessIdOffset)) {
+            g_KernelOffsets.UniqueProcessId = uniqueProcessIdOffset;
+            // ActiveProcessLinks always follows UniqueProcessId (+8 on x64)
+            g_KernelOffsets.ActiveProcessLinks = uniqueProcessIdOffset + 8;
+        }
+    }
+
+    // DirectoryTableBase is at fixed offset 0x28 in KPROCESS (stable across versions)
+    // ImageFileName offset could be discovered from PsGetProcessImageFileName if needed
+
+    g_KernelOffsets.Discovered = true;
+    return STATUS_SUCCESS;
+}
+
+// Accessor functions for offsets
+U64 KernelGetUniqueProcessIdOffset(void) {
+    if (!g_KernelOffsets.Discovered) KernelDiscoverOffsets();
+    return g_KernelOffsets.UniqueProcessId;
+}
+
+U64 KernelGetActiveProcessLinksOffset(void) {
+    if (!g_KernelOffsets.Discovered) KernelDiscoverOffsets();
+    return g_KernelOffsets.ActiveProcessLinks;
+}
+
+U64 KernelGetDirectoryTableBaseOffset(void) {
+    if (!g_KernelOffsets.Discovered) KernelDiscoverOffsets();
+    return g_KernelOffsets.DirectoryTableBase;
+}
+
+U64 KernelGetImageFileNameOffset(void) {
+    if (!g_KernelOffsets.Discovered) KernelDiscoverOffsets();
+    return g_KernelOffsets.ImageFileName;
+}
