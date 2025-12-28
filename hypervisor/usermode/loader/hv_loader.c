@@ -449,29 +449,10 @@ BOOL HvLoaderLoad(HV_LOADER_CTX* ctx, const void* hvImage, U32 hvImageSize) {
         printf("    Hypervisor may fail to initialize without MmGetSystemRoutineAddress\n");
     }
 
-    // 5. Apply -618 bypass NOW (driver is loaded, we can find its base)
-    printf("[*] Applying -618 bypass before LDR_OPEN...\n");
-
-    // DEBUG: Print ctx state BEFORE bypass
-    printf("[DEBUG] BEFORE Apply618Bypass:\n");
-    printf("[DEBUG]   ctx=%p\n", (void*)ctx);
-    printf("[DEBUG]   ctx->Drv.hDevice=%p\n", ctx->Drv.hDevice);
-    printf("[DEBUG]   ctx->Drv.Cookie=0x%08X\n", ctx->Drv.Cookie);
-    printf("[DEBUG]   ctx->Drv.SessionCookie=0x%08X\n", ctx->Drv.SessionCookie);
-    printf("[DEBUG]   ctx->Drv.pSession=0x%llX\n", (unsigned long long)ctx->Drv.pSession);
-    printf("[DEBUG]   ctx->Drv.bInitialized=%d\n", ctx->Drv.bInitialized);
-    fflush(stdout);
-
-    Apply618Bypass();
-
-    // DEBUG: Print ctx state AFTER bypass
-    printf("[DEBUG] AFTER Apply618Bypass:\n");
-    printf("[DEBUG]   ctx=%p\n", (void*)ctx);
-    printf("[DEBUG]   ctx->Drv.hDevice=%p\n", ctx->Drv.hDevice);
-    printf("[DEBUG]   ctx->Drv.Cookie=0x%08X\n", ctx->Drv.Cookie);
-    printf("[DEBUG]   ctx->Drv.SessionCookie=0x%08X\n", ctx->Drv.SessionCookie);
-    printf("[DEBUG]   ctx->Drv.pSession=0x%llX\n", (unsigned long long)ctx->Drv.pSession);
-    printf("[DEBUG]   ctx->Drv.bInitialized=%d\n", ctx->Drv.bInitialized);
+    // 5. SKIP -618 bypass - testing if error 87 is the actual problem
+    // Apply618Bypass() COMMENTED OUT FOR DIAGNOSIS
+    // If we still get error 87, the problem is our LDR_OPEN call, not -618
+    printf("[*] DIAGNOSTIC: Skipping -618 bypass to isolate error source\n");
     fflush(stdout);
 
     // 6. Allocate kernel memory for hypervisor (calls LDR_OPEN)
