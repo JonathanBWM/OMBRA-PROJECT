@@ -372,9 +372,15 @@ BOOL HvLoaderLoad(HV_LOADER_CTX* ctx, const void* hvImage, U32 hvImageSize) {
     if (!ResolveMmGetSystemRoutineAddress(&ctx->Drv, &mmGetSystemRoutineAddress)) {
         return FALSE;
     }
+    printf("[DEBUG] ResolveMmGetSystemRoutineAddress returned, addr=0x%llX\n", mmGetSystemRoutineAddress);
+    fflush(stdout);
 
     // 3. Make a copy of image for modifications (relocations + .ombra patching)
+    printf("[DEBUG] About to malloc(%u) for image copy\n", hvImageSize);
+    fflush(stdout);
     void* hvImageCopy = malloc(hvImageSize);
+    printf("[DEBUG] malloc returned %p\n", hvImageCopy);
+    fflush(stdout);
     if (!hvImageCopy) {
         printf("[-] Failed to allocate image copy\n");
         return FALSE;
