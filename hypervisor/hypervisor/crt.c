@@ -12,6 +12,14 @@
 // Use U64 for size_t since we're in a no-CRT environment
 typedef U64 size_t;
 
+// Disable intrinsics for all functions we're defining
+// This allows us to provide custom implementations
+#pragma function(memcpy)
+#pragma function(memset)
+#pragma function(strlen)
+#pragma function(memmove)
+#pragma function(memcmp)
+
 // =============================================================================
 // memcpy - Copy memory block
 // =============================================================================
@@ -20,7 +28,6 @@ typedef U64 size_t;
 // For larger copies in performance-critical paths, consider using __movsb
 // intrinsic directly.
 
-#pragma function(memcpy)
 void* memcpy(void* dest, const void* src, size_t count) {
     U8* d = (U8*)dest;
     const U8* s = (const U8*)src;
@@ -40,7 +47,6 @@ void* memcpy(void* dest, const void* src, size_t count) {
 // For larger fills in performance-critical paths, consider using __stosb
 // intrinsic directly.
 
-#pragma function(memset)
 void* memset(void* dest, int value, size_t count) {
     U8* d = (U8*)dest;
     U8 v = (U8)value;
