@@ -124,11 +124,37 @@ TS_STATIC_ASSERT(sizeof(TS_WRITE_REQ_1) == 9,  "TS_WRITE_REQ_1 must be 9 bytes")
 #define PT_PTE_SHIFT      12
 
 //=============================================================================
-// -618 Bypass Offsets (from binary analysis)
+// -618 Bypass Offsets (from Ghidra RE analysis - Dec 2025)
 //=============================================================================
+//
+// Memory layout in Ld9BoxSup.sys:
+//   0x4a170: "ntoskrnl.exe" string
+//   0x4a190: ntoskrnl GUARD flag (controls whether parsing runs)
+//   0x4a1a0: ntoskrnl RESULT flag (set by parsing, checked for -618)
+//   0x4a1e0: "hal.dll" string
+//   0x4a200: hal GUARD flag (controls whether parsing runs)
+//   0x4a210: hal RESULT flag (set by parsing, checked for -618)
+//
+// Critical logic in FUN_14001d330 (rtR0DbgKrnlNtInit):
+//   if ((guard_ntoskrnl == 0) && (guard_hal == 0)) {
+//       result_ntoskrnl = parse_ntoskrnl();  // OVERWRITES our patch!
+//       result_hal = parse_hal();            // OVERWRITES our patch!
+//       if (result_ntoskrnl == 0 || result_hal == 0)
+//           return -618;  // ERROR!
+//   }
+//
+// FIX: Patch GUARD flags to skip parsing entirely. If either guard is non-zero,
+// the entire parsing block is skipped and -618 is never returned.
+//
+// OLD (BROKEN): Patched result flags which got overwritten by parsing
+// NEW (CORRECT): Patch guard flags to skip the parsing block entirely
 
-#define LD9BOX_NTOSKRNL_FLAG_OFFSET   0x4a1a0
-#define LD9BOX_HAL_FLAG_OFFSET        0x4a210
+#define LD9BOX_NTOSKRNL_GUARD_OFFSET  0x4a190  // Patch this to 1 to skip parsing
+#define LD9BOX_HAL_GUARD_OFFSET       0x4a200  // Patch this to 1 to skip parsing
+
+// Legacy result flag offsets (for reference only - DO NOT PATCH THESE)
+#define LD9BOX_NTOSKRNL_RESULT_OFFSET 0x4a1a0  // Gets overwritten by parsing
+#define LD9BOX_HAL_RESULT_OFFSET      0x4a210  // Gets overwritten by parsing
 
 //=============================================================================
 // EPROCESS Offsets (Windows 10/11)
@@ -312,15 +338,20 @@ UINT64 TS_GetSystemCr3(PTS_CTX ctx);
 //=============================================================================
 
 /**
- * Patch Ld9BoxSup.sys -618 validation flags
+ * Patch Ld9BoxSup.sys -618 GUARD flags to bypass module parsing
  *
  * @param ctx Context
  * @param ld9BoxBase Base address of Ld9BoxSup.sys
- * @return true if both flags patched successfully
+ * @return true if both guard flags patched successfully
+ *
+ * Strategy:
+ *   The driver checks: if ((guard_ntoskrnl == 0) && (guard_hal == 0))
+ *   If both guards are 0, it runs module parsing which can fail -> -618
+ *   By setting guards to 1, we skip the entire parsing block.
  *
  * Patches:
- *   driver_base + 0x4a1a0 = 1 (ntoskrnl flag)
- *   driver_base + 0x4a210 = 1 (hal flag)
+ *   driver_base + 0x4a190 = 1 (ntoskrnl GUARD - skips parsing)
+ *   driver_base + 0x4a200 = 1 (hal GUARD - skips parsing)
  *
  * After this, LDR_OPEN will succeed!
  */

