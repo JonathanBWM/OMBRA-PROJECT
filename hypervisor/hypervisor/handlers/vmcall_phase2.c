@@ -10,6 +10,32 @@
 #include <intrin.h>
 
 // =============================================================================
+// Forward Declarations and Debug Macros
+// =============================================================================
+
+// Debug macros (stubbed if not defined in debug.h)
+#ifndef TRACE
+#define TRACE(...) ((void)0)
+#endif
+#ifndef ERR
+#define ERR(...) ((void)0)
+#endif
+#ifndef INFO
+#define INFO(...) ((void)0)
+#endif
+
+// Kernel address range validation - returns true if addr is in kernel VA space
+static inline bool IsValidKernelAddress(U64 addr) {
+    // Windows x64 kernel addresses: 0xFFFF800000000000 - 0xFFFFFFFFFFFFFFFF
+    return (addr >= 0xFFFF800000000000ULL);
+}
+
+// Check for integer overflow when adding size to address
+static inline bool WouldOverflow(U64 base, U64 size) {
+    return (base + size < base);
+}
+
+// =============================================================================
 // Pool Region Tracking
 // =============================================================================
 
@@ -323,19 +349,6 @@ static inline U64 ReadGuestPhysical64(U64 physAddr) {
     return *ptr;
 }
 
-// Kernel address range validation
-// Returns true if the address is in valid kernel VA space
-static inline bool IsValidKernelAddress(U64 addr) {
-    // Windows x64 kernel addresses are in the range 0xFFFF800000000000 - 0xFFFFFFFFFFFFFFFF
-    // The canonical high bits (48-63) must all be 1 for kernel space
-    return (addr >= 0xFFFF800000000000ULL);
-}
-
-// Check for integer overflow when adding size to address
-static inline bool WouldOverflow(U64 base, U64 size) {
-    return (base + size < base);
-}
-
 // Walk guest page tables to check if a VA is mapped
 // Returns 0 if not mapped, physical address if mapped
 static U64 WalkGuestPageTablesInternal(U64 guestVA, U64 guestCr3) {
@@ -466,7 +479,7 @@ static OMBRA_STATUS HandleCreateEptMapping(VMCALL_EPT_MAP_IN* in, VMCALL_EPT_MAP
     // Determine kernel VA
     if (in->Flags & EPT_MAP_FLAG_AUTO_VA) {
         // Auto-find unused kernel VA range
-        guestCr3 = __vmx_vmread(VMCS_GUEST_CR3);
+        __vmx_vmread(VMCS_GUEST_CR3, (size_t*)&guestCr3);
         kernelVA = FindUnusedKernelVA(guestCr3, alignedSize);
         if (kernelVA == 0) {
             out->Status = OMBRA_ERROR_NO_MEMORY;
