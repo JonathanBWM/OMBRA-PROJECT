@@ -340,12 +340,17 @@ bool SupDrv_LdrOpen(PSUPDRV_CTX ctx, UINT32 cbImage, void** ppvImageBase) {
     req.u.In.cbImageWithTabs = cbAligned + 0x1000;  // Add 1 page for tabs/metadata
     req.u.In.cbImageBits = cbImage;                 // Actual image size (must be < cbImageWithTabs)
     GetModuleName(req.u.In.szName, sizeof(req.u.In.szName));
-    // Use existing system file to trigger different error code
-    // Native loader path returns -610 for non-existent files (STATUS_OBJECT_NAME_NOT_FOUND)
-    // But fallback only triggers on -37. Try using existing file for different status.
-    // DEBUG: Test with ntdll.dll (exists, not a driver, should return different error)
-    strncpy_s(req.u.In.szFilename, sizeof(req.u.In.szFilename),
-              "C:\\Windows\\System32\\ntdll.dll", _TRUNCATE);
+    // BINARY EVIDENCE (Dec 2025 Ghidra analysis of Ld9BoxSup.sys):
+    // - szFilename is passed to ZwSetSystemInformation(0x36) which tries native driver loading
+    // - Native loader returns various NTSTATUS codes mapped to IPRT error codes:
+    //     * STATUS_OBJECT_NAME_NOT_FOUND (0xC0000034) → -610
+    //     * STATUS_DRIVER_BLOCKED (0xC0000263) → -617
+    //     * Any unmapped NTSTATUS → -618 (this is why ntdll.dll gave -618)
+    // - Fallback path (RTMemExecAllocTag) only triggers on error -37
+    //
+    // STRATEGY: Use empty path to trigger different error code that may hit fallback
+    // If that doesn't work, we need a valid signed .sys file path for native loading
+    req.u.In.szFilename[0] = '\0';  // Empty path - test if triggers -37 fallback
 
     // DEBUG: Print request structure
     DbgLog("[DEBUG LDR_OPEN] Request structure:");
