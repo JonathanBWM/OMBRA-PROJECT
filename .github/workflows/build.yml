@@ -62,6 +62,8 @@ jobs:
         if %ERRORLEVEL% neq 0 exit /b 1
         ml64.exe /nologo /c /Foasm\obj\segment.obj asm\segment.asm
         if %ERRORLEVEL% neq 0 exit /b 1
+        ml64.exe /nologo /c /Foasm\obj\crt.obj asm\crt.asm
+        if %ERRORLEVEL% neq 0 exit /b 1
         echo Assembly built successfully
         dir asm\obj\*.obj
 
@@ -77,7 +79,7 @@ jobs:
         echo.
 
         cl.exe /nologo /c /O2 /W4 /WX- /GS- /I..\shared /Foobj\ ^
-          entry.c vmx.c vmcs.c ept.c exit_dispatch.c timing.c ^
+          crt.c entry.c vmx.c vmcs.c ept.c exit_dispatch.c timing.c ^
           hooks.c debug.c nested.c spoof.c
         if %ERRORLEVEL% neq 0 exit /b 1
         echo Core modules built
