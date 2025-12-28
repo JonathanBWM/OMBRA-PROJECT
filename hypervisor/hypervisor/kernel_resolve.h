@@ -54,6 +54,34 @@ typedef void* PDRIVER_OBJECT;
 typedef void* PFILE_OBJECT;
 typedef void* PMDL;
 
+// =============================================================================
+// MDL Memory Allocation Types
+// =============================================================================
+
+// Memory priority for MmMapLockedPagesSpecifyCache
+typedef enum _MM_PAGE_PRIORITY {
+    LowPagePriority = 0,
+    NormalPagePriority = 16,
+    HighPagePriority = 32
+} MM_PAGE_PRIORITY;
+
+// MDL allocation flags for MmAllocatePagesForMdlEx
+#define MM_DONT_ZERO_ALLOCATION         0x00000001
+#define MM_ALLOCATE_FROM_LOCAL_NODE_ONLY 0x00000002
+#define MM_ALLOCATE_FULLY_REQUIRED      0x00000004
+#define MM_ALLOCATE_NO_WAIT             0x00000008
+#define MM_ALLOCATE_PREFER_CONTIGUOUS   0x00000010
+#define MM_ALLOCATE_REQUIRE_CONTIGUOUS_CHUNKS 0x00000020
+
+// Memory caching types for mapping
+#define MmNonCached      0
+#define MmCached         1
+#define MmWriteCombined  2
+
+// Lock operation for MmMapLockedPagesSpecifyCache
+#define KernelMode       0
+#define UserMode         1
+
 // Calling convention
 #ifndef NTAPI
 #define NTAPI __stdcall
@@ -120,17 +148,95 @@ typedef NTSTATUS (NTAPI *FN_ZwQuerySystemInformation)(
 typedef PVOID (NTAPI *FN_MmGetSystemRoutineAddress)(PUNICODE_STRING SystemRoutineName);
 
 // =============================================================================
+// MDL Memory Allocation Functions
+// =============================================================================
+// These are used for stealth allocation that bypasses BigPool tracking.
+
+// Allocate physical pages and return MDL describing them
+// LowAddress/HighAddress: physical address range
+// SkipBytes: number of bytes to skip (alignment boundary)
+// TotalBytes: total bytes to allocate
+typedef PMDL (NTAPI *FN_MmAllocatePagesForMdl)(
+    U64 LowAddress,
+    U64 HighAddress,
+    U64 SkipBytes,
+    U64 TotalBytes
+);
+
+// Extended version with flags for contiguous allocation
+typedef PMDL (NTAPI *FN_MmAllocatePagesForMdlEx)(
+    U64 LowAddress,
+    U64 HighAddress,
+    U64 SkipBytes,
+    U64 TotalBytes,
+    U32 CacheType,          // MmCached, MmNonCached, MmWriteCombined
+    U32 Flags               // MM_ALLOCATE_* flags
+);
+
+// Map MDL pages into system address space
+// Mdl: MDL to map
+// AccessMode: KernelMode or UserMode
+// CacheType: Memory caching type
+// RequestedAddress: Preferred VA (can be NULL)
+// BugCheckOnFailure: FALSE for graceful failure
+// Priority: Memory priority level
+typedef PVOID (NTAPI *FN_MmMapLockedPagesSpecifyCache)(
+    PMDL Mdl,
+    U32 AccessMode,         // KernelMode = 0
+    U32 CacheType,          // MmCached = 1
+    PVOID RequestedAddress, // NULL for any address
+    U32 BugCheckOnFailure,  // FALSE = 0
+    U32 Priority            // HighPagePriority = 32
+);
+
+// Set memory protection on MDL-mapped pages
+// MdlVirtualAddress: VA returned from MmMapLockedPagesSpecifyCache
+// Protect: PAGE_EXECUTE_READWRITE etc.
+typedef NTSTATUS (NTAPI *FN_MmProtectMdlSystemAddress)(
+    PMDL Mdl,
+    U32 Protect
+);
+
+// Free physical pages allocated by MmAllocatePagesForMdl[Ex]
+typedef void (NTAPI *FN_MmFreePagesFromMdl)(PMDL Mdl);
+
+// Unmap pages previously mapped with MmMapLockedPagesSpecifyCache
+typedef void (NTAPI *FN_MmUnmapLockedPages)(
+    PVOID BaseAddress,
+    PMDL Mdl
+);
+
+// RtlZeroMemory for zeroing allocated pages
+typedef void (NTAPI *FN_RtlZeroMemory)(
+    PVOID Destination,
+    U64 Length
+);
+
+// IoFreeMdl to free the MDL structure itself (after MmFreePagesFromMdl)
+typedef void (NTAPI *FN_IoFreeMdl)(PMDL Mdl);
+
+// =============================================================================
 // Resolved Symbols Structure
 // =============================================================================
 
 typedef struct _KERNEL_SYMBOLS {
-    // Memory
+    // Memory (legacy - pool-based, visible in BigPool)
     FN_MmAllocateContiguousMemorySpecifyCacheNode MmAllocateContiguousMemorySpecifyCacheNode;
     FN_MmFreeContiguousMemory MmFreeContiguousMemory;
     FN_ExAllocatePool ExAllocatePool;
     FN_ExFreePool ExFreePool;
     FN_MmGetPhysicalAddress MmGetPhysicalAddress;
     FN_MmGetVirtualForPhysical MmGetVirtualForPhysical;
+
+    // MDL Memory (stealth - NOT visible in BigPool)
+    FN_MmAllocatePagesForMdl MmAllocatePagesForMdl;
+    FN_MmAllocatePagesForMdlEx MmAllocatePagesForMdlEx;
+    FN_MmMapLockedPagesSpecifyCache MmMapLockedPagesSpecifyCache;
+    FN_MmProtectMdlSystemAddress MmProtectMdlSystemAddress;
+    FN_MmFreePagesFromMdl MmFreePagesFromMdl;
+    FN_MmUnmapLockedPages MmUnmapLockedPages;
+    FN_RtlZeroMemory RtlZeroMemory;
+    FN_IoFreeMdl IoFreeMdl;
 
     // IPI / Processor
     FN_KeIpiGenericCall KeIpiGenericCall;

@@ -355,6 +355,32 @@ BOOL HvLoaderLoad(HV_LOADER_CTX* ctx, const void* hvImage, U32 hvImageSize) {
     printf("[+] Hypervisor loaded and running!\n");
 
     // =========================================================================
+    // FREE IPRT MEMORY (MDL-BASED STEALTH MODE)
+    // =========================================================================
+    // With MDL-based stealth allocation, the hypervisor has relocated itself
+    // to MDL-backed memory that is invisible in BigPool. The original IPRT
+    // allocation (from LDR_OPEN) is now just a detection vector and should
+    // be freed.
+    //
+    // The hypervisor is running from MDL memory, so it's safe to free the
+    // original allocation. This eliminates the 'IPRT' pool tag from BigPool.
+    // =========================================================================
+
+    printf("[*] Freeing original IPRT allocation (hypervisor now in MDL memory)...\n");
+    if (ctx->ImageBase) {
+        DRV_STATUS freeStatus = DrvLdrFree(&ctx->Driver, ctx->ImageBase);
+        if (freeStatus == DRV_SUCCESS) {
+            printf("[+] IPRT allocation freed - BigPool footprint eliminated\n");
+        } else {
+            printf("[!] Warning: Failed to free IPRT allocation (error %d)\n", freeStatus);
+            printf("    Hypervisor running but original allocation may be visible\n");
+        }
+        // Clear the pointer regardless - we're not using this memory anymore
+        ctx->ImageBase = NULL;
+        ctx->ImageSize = 0;
+    }
+
+    // =========================================================================
     // EPHEMERAL DRIVER UNLOAD
     // =========================================================================
     // The hypervisor is now running in VMX root mode and has its own memory

@@ -81,6 +81,31 @@ NTSTATUS KernelResolveSymbols(void) {
     g_KernelSymbols.MmGetVirtualForPhysical =
         (FN_MmGetVirtualForPhysical)KernelResolveSymbol(L"MmGetVirtualForPhysical");
 
+    // Resolve MDL memory functions (stealth allocation - NOT visible in BigPool)
+    g_KernelSymbols.MmAllocatePagesForMdl =
+        (FN_MmAllocatePagesForMdl)KernelResolveSymbol(L"MmAllocatePagesForMdl");
+
+    g_KernelSymbols.MmAllocatePagesForMdlEx =
+        (FN_MmAllocatePagesForMdlEx)KernelResolveSymbol(L"MmAllocatePagesForMdlEx");
+
+    g_KernelSymbols.MmMapLockedPagesSpecifyCache =
+        (FN_MmMapLockedPagesSpecifyCache)KernelResolveSymbol(L"MmMapLockedPagesSpecifyCache");
+
+    g_KernelSymbols.MmProtectMdlSystemAddress =
+        (FN_MmProtectMdlSystemAddress)KernelResolveSymbol(L"MmProtectMdlSystemAddress");
+
+    g_KernelSymbols.MmFreePagesFromMdl =
+        (FN_MmFreePagesFromMdl)KernelResolveSymbol(L"MmFreePagesFromMdl");
+
+    g_KernelSymbols.MmUnmapLockedPages =
+        (FN_MmUnmapLockedPages)KernelResolveSymbol(L"MmUnmapLockedPages");
+
+    g_KernelSymbols.RtlZeroMemory =
+        (FN_RtlZeroMemory)KernelResolveSymbol(L"RtlZeroMemory");
+
+    g_KernelSymbols.IoFreeMdl =
+        (FN_IoFreeMdl)KernelResolveSymbol(L"IoFreeMdl");
+
     // Resolve IPI / processor functions
     g_KernelSymbols.KeIpiGenericCall =
         (FN_KeIpiGenericCall)KernelResolveSymbol(L"KeIpiGenericCall");
@@ -139,14 +164,11 @@ NTSTATUS KernelResolveSymbols(void) {
 // Memory Allocation Helpers
 // =============================================================================
 
-// Pool types
+// Pool types (these are not in the header)
 #define NonPagedPool 0
 #define NonPagedPoolNx 512
 
-// Cache types
-#define MmNonCached 0
-#define MmCached 1
-#define MmWriteCombined 2
+// Note: MmNonCached, MmCached, MmWriteCombined are now defined in kernel_resolve.h
 
 PVOID KernelAllocateContiguous(U64 size) {
     if (!g_KernelSymbols.Initialized ||

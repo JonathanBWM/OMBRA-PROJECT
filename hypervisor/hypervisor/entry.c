@@ -16,6 +16,8 @@
 #include "debug.h"
 #include "kernel_resolve.h"
 #include "self_info.h"
+#include "mdl_alloc.h"
+#include "relocation.h"
 #include <intrin.h>
 
 // =============================================================================
@@ -38,6 +40,8 @@ static EPT_STATE g_EptState = {0};
 static volatile U32 g_SuccessCount = 0;
 static volatile U32 g_FailCount = 0;
 static bool g_Initialized = false;
+static bool g_UseMdlAllocation = true;      // Use MDL-based stealth allocation
+static bool g_Phase2Complete = false;        // Set after Phase 2 relocation completes
 
 // External hook manager
 extern HOOK_MANAGER g_HookManager;
@@ -154,6 +158,120 @@ static void ReadVmxCapabilities(void) {
 static void ZeroMem(void* dst, U64 size) {
     U8* p = (U8*)dst;
     while (size--) *p++ = 0;
+}
+
+// =============================================================================
+// Allocate VMX Resources Using MDL Allocator (Stealth Mode)
+// =============================================================================
+// Uses MdlAlloc* functions which do NOT create BigPool entries.
+// Called in Phase 2 after self-relocation is complete.
+
+static OMBRA_STATUS AllocateResourcesMdl(void) {
+    U32 cpuCount;
+    MDL_ALLOCATOR* alloc = g_MdlAllocator;
+
+    if (!alloc || !alloc->Initialized) {
+        return OMBRA_ERROR_NOT_INITIALIZED;
+    }
+
+    if (g_Resources.Allocated) {
+        return OMBRA_SUCCESS;
+    }
+
+    // Get CPU count
+    cpuCount = KernelGetProcessorCount();
+    if (cpuCount == 0 || cpuCount > HV_MAX_CPUS) {
+        return OMBRA_ERROR_INVALID_PARAM;
+    }
+    g_Resources.CpuCount = cpuCount;
+
+    // Allocate VMXON regions from MDL (4KB aligned)
+    g_Resources.VmxonRegions = MdlAllocAligned(alloc, cpuCount * 0x1000, 0x1000);
+    if (!g_Resources.VmxonRegions) {
+        return OMBRA_ERROR_NO_MEMORY;
+    }
+    ZeroMem(g_Resources.VmxonRegions, cpuCount * 0x1000);
+    g_Resources.VmxonRegionsPhys = MdlGetPhysicalAddress(g_Resources.VmxonRegions);
+
+    // Allocate VMCS regions from dedicated VMCS region
+    // Each CPU gets its own VMCS from the pre-allocated VMCS pool
+    g_Resources.VmcsRegions = MdlAllocAligned(alloc, cpuCount * 0x1000, 0x1000);
+    if (!g_Resources.VmcsRegions) {
+        return OMBRA_ERROR_NO_MEMORY;
+    }
+    ZeroMem(g_Resources.VmcsRegions, cpuCount * 0x1000);
+    g_Resources.VmcsRegionsPhys = MdlGetPhysicalAddress(g_Resources.VmcsRegions);
+
+    // Allocate host stacks from stack region
+    U64 stackSize = cpuCount * HV_HOST_STACK_SIZE;
+    g_Resources.HostStacks = MdlAllocStack(alloc, stackSize, NULL);
+    if (!g_Resources.HostStacks) {
+        return OMBRA_ERROR_NO_MEMORY;
+    }
+    ZeroMem(g_Resources.HostStacks, stackSize);
+
+    // Allocate MSR bitmap (4KB, from VMCS or misc region)
+    g_Resources.MsrBitmap = MdlAllocMsrBitmap(alloc, &g_Resources.MsrBitmapPhys);
+    if (!g_Resources.MsrBitmap) {
+        return OMBRA_ERROR_NO_MEMORY;
+    }
+    ZeroMem(g_Resources.MsrBitmap, 0x1000);
+
+    // Allocate EPT tables from EPT region
+    U64 eptSize = HV_EPT_PAGES * 0x1000;
+    g_Resources.EptTables = MdlAllocEptTable(alloc, &g_Resources.EptTablesPhys);
+    if (!g_Resources.EptTables) {
+        return OMBRA_ERROR_NO_MEMORY;
+    }
+    // Allocate more EPT pages - the first one just gives us a start
+    // We need to allocate additional pages for the full EPT structure
+    for (U32 i = 1; i < HV_EPT_PAGES; i++) {
+        U64 phys;
+        void* page = MdlAllocEptTable(alloc, &phys);
+        if (!page) break;
+        // Pages are contiguous in the EPT region, just keep allocating
+    }
+
+    // Allocate debug buffer from misc region
+    g_Resources.DebugBuffer = MdlAllocMisc(alloc, HV_DEBUG_BUFFER_SIZE);
+    if (g_Resources.DebugBuffer) {
+        ZeroMem(g_Resources.DebugBuffer, HV_DEBUG_BUFFER_SIZE);
+    }
+
+    // Allocate blank page for EPT hiding
+    U64 blankPhys;
+    g_Resources.BlankPage = MdlAllocAligned(alloc, 0x1000, 0x1000);
+    if (g_Resources.BlankPage) {
+        ZeroMem(g_Resources.BlankPage, 0x1000);
+        g_Resources.BlankPagePhys = MdlGetPhysicalAddress(g_Resources.BlankPage);
+    }
+
+    // Pre-allocate split pools from MDL
+    g_Resources.SplitPoolCount = 0;
+    g_Resources.SplitPoolIndex = 0;
+    for (U32 i = 0; i < HV_SPLIT_POOL_COUNT; i++) {
+        g_Resources.SplitPools[i] = MdlAllocMisc(alloc, HV_SPLIT_POOL_SIZE);
+        if (g_Resources.SplitPools[i]) {
+            ZeroMem(g_Resources.SplitPools[i], HV_SPLIT_POOL_SIZE);
+            g_Resources.SplitPoolsPhys[i] = MdlGetPhysicalAddress(g_Resources.SplitPools[i]);
+            g_Resources.SplitPoolCount++;
+        } else {
+            break;
+        }
+    }
+
+    // Write revision ID to all VMXON/VMCS regions
+    U32 revisionId = (U32)(g_Resources.VmxBasic & 0x7FFFFFFF);
+    for (U32 i = 0; i < cpuCount; i++) {
+        U32* vmxon = (U32*)((U8*)g_Resources.VmxonRegions + (i * 0x1000));
+        *vmxon = revisionId;
+
+        U32* vmcs = (U32*)((U8*)g_Resources.VmcsRegions + (i * 0x1000));
+        *vmcs = revisionId;
+    }
+
+    g_Resources.Allocated = true;
+    return OMBRA_SUCCESS;
 }
 
 // =============================================================================
@@ -581,13 +699,98 @@ static OMBRA_STATUS OmbraInitialize(void) {
 }
 
 // =============================================================================
-// Entry Point - Called by Loader
+// Phase 2 Entry Point (Runs from MDL Memory)
 // =============================================================================
 //
+// Called after self-relocation from IPRT memory to MDL memory.
+// At this point:
+// - Hypervisor code is running from MDL-backed memory (invisible in BigPool)
+// - MDL allocator is initialized with pre-allocated regions
+// - All VMX resources should be allocated from MDL regions
+//
+// The relocation context contains information about the source (IPRT) memory
+// that should be freed by the loader after Phase 2 returns successfully.
+
+static OMBRA_STATUS HvEntryPhase2(RELOCATION_CONTEXT* ctx) {
+    OMBRA_STATUS status;
+
+    // Mark Phase 2 as active
+    g_Phase2Complete = false;
+
+    INFO("Phase 2 starting from MDL memory at 0x%p", ctx->DestBase);
+    INFO("  Source (IPRT): 0x%p (%llu bytes)", ctx->SourceBase, ctx->SourceSize);
+    INFO("  Dest (MDL):    0x%p (%llu bytes)", ctx->DestBase, ctx->DestSize);
+    INFO("  Delta:         0x%llx", ctx->Delta);
+
+    // At this point, we're running from MDL memory
+    // The MDL allocator (g_MdlAllocator) should already be set up
+
+    // Verify MDL allocator is available
+    if (!g_MdlAllocator || !g_MdlAllocator->Initialized) {
+        ERR("Phase 2: MDL allocator not available!");
+        return OMBRA_ERROR_NOT_INITIALIZED;
+    }
+
+    // Read VMX capability MSRs (if not already done)
+    if (g_Resources.VmxBasic == 0) {
+        ReadVmxCapabilities();
+    }
+
+    // Allocate VMX resources using MDL allocator (stealth mode)
+    status = AllocateResourcesMdl();
+    if (OMBRA_FAILED(status)) {
+        ERR("Phase 2: MDL resource allocation failed: 0x%X", status);
+        return status;
+    }
+    INFO("Phase 2: Resources allocated from MDL memory");
+
+    // Print MDL allocation stats
+    MDL_STATS stats;
+    MdlGetStats(g_MdlAllocator, &stats);
+    INFO("  Main:  %llu / %llu bytes used", stats.MainUsed, stats.MainTotal);
+    INFO("  VMCS:  %llu / %llu bytes used", stats.VmcsUsed, stats.VmcsTotal);
+    INFO("  EPT:   %llu / %llu bytes used", stats.EptUsed, stats.EptTotal);
+    INFO("  Stack: %llu / %llu bytes used", stats.StackUsed, stats.StackTotal);
+    INFO("  MSR:   %llu / %llu bytes used", stats.MsrUsed, stats.MsrTotal);
+    INFO("  Misc:  %llu / %llu bytes used", stats.MiscUsed, stats.MiscTotal);
+
+    // Continue with normal hypervisor initialization
+    status = OmbraInitialize();
+    if (OMBRA_FAILED(status)) {
+        ERR("Phase 2: OmbraInitialize failed: 0x%X", status);
+        return status;
+    }
+
+    g_Phase2Complete = true;
+    INFO("Phase 2 complete - hypervisor running from stealth memory");
+
+    // Return success - caller (loader) can now free IPRT memory
+    return OMBRA_SUCCESS;
+}
+
+// =============================================================================
+// Entry Point - Called by Loader (Phase 1)
+// =============================================================================
+//
+// Two-Phase Initialization for Stealth Memory:
+//
+// Phase 1 (this function, runs from IPRT memory):
+//   1. Resolve kernel symbols (including MDL functions)
+//   2. Initialize MDL allocator (creates stealth memory regions)
+//   3. Copy hypervisor image to MDL memory
+//   4. Apply PE base relocations
+//   5. Jump to Phase 2 in the relocated image
+//
+// Phase 2 (HvEntryPhase2, runs from MDL memory):
+//   1. Allocate VMX resources from MDL memory (no BigPool footprint)
+//   2. Initialize EPT, hooks, and VMX on all CPUs
+//   3. Return success to loader, which can free IPRT memory
+//
 // The loader must:
-// 1. Set g_KernelSymbols.MmGetSystemRoutineAddress before calling
-// 2. Call HvEntry(NULL) or HvEntry(MmGetSystemRoutineAddress)
-// 3. Returns 0 on success, negative on failure
+//   1. Set g_KernelSymbols.MmGetSystemRoutineAddress before calling
+//   2. Call HvEntry(NULL) or HvEntry(MmGetSystemRoutineAddress)
+//   3. Returns 0 on success, negative on failure
+//   4. On success, free the original IPRT memory allocation
 
 __declspec(dllexport)
 int HvEntry(void* MmGetSystemRoutineAddress) {
@@ -604,16 +807,90 @@ int HvEntry(void* MmGetSystemRoutineAddress) {
         return -1;  // No bootstrap function
     }
 
-    // Resolve all kernel symbols
+    // Resolve all kernel symbols (including MDL functions)
     status = KernelResolveSymbols();
     if (OMBRA_FAILED(status)) {
         return -2;  // Symbol resolution failed
     }
 
-    // Read VMX capability MSRs
+    // Read VMX capability MSRs (needed for resource allocation)
     ReadVmxCapabilities();
 
-    // Allocate VMX resources
+    // Check if MDL-based stealth allocation is enabled and available
+    if (g_UseMdlAllocation &&
+        g_KernelSymbols.MmAllocatePagesForMdlEx &&
+        g_KernelSymbols.MmMapLockedPagesSpecifyCache) {
+
+        // =====================================================================
+        // PHASE 1: MDL Allocation and Self-Relocation
+        // =====================================================================
+
+        // Initialize the bootstrap MDL allocator
+        // This creates all the stealth memory regions
+        status = MdlAllocatorInit(&g_BootstrapAllocator);
+        if (OMBRA_FAILED(status)) {
+            // MDL allocation failed - fall back to legacy mode
+            g_UseMdlAllocation = false;
+            goto legacy_mode;
+        }
+
+        // Set the global allocator pointer
+        g_MdlAllocator = &g_BootstrapAllocator;
+
+        // Perform self-relocation to MDL memory
+        // This copies the hypervisor image and applies PE relocations
+        status = RelocateSelf();
+        if (OMBRA_FAILED(status)) {
+            // Relocation failed - clean up and fall back to legacy mode
+            MdlAllocatorDestroy(&g_BootstrapAllocator);
+            g_MdlAllocator = NULL;
+            g_UseMdlAllocation = false;
+            goto legacy_mode;
+        }
+
+        // Calculate the Phase 2 entry address in the relocated image
+        FN_Phase2Entry phase2 = (FN_Phase2Entry)RelocateCalculatePhase2Address(
+            (void*)HvEntryPhase2
+        );
+
+        if (!phase2) {
+            // Failed to calculate Phase 2 address
+            MdlAllocatorDestroy(&g_BootstrapAllocator);
+            g_MdlAllocator = NULL;
+            g_UseMdlAllocation = false;
+            goto legacy_mode;
+        }
+
+        // =====================================================================
+        // JUMP TO PHASE 2 (in MDL memory)
+        // =====================================================================
+        // After this call, we're running from stealth memory.
+        // Phase 2 will allocate VMX resources and initialize the hypervisor.
+        // When Phase 2 returns, the hypervisor is active and we're running
+        // as a guest. The loader can then free the IPRT memory.
+
+        status = RelocateJumpToPhase2(phase2);
+
+        if (OMBRA_SUCCESS == status && g_Phase2Complete) {
+            // Success - hypervisor running from stealth memory
+            // The loader should now free the original IPRT allocation
+            return 0;
+        }
+
+        // Phase 2 failed - fall back to legacy mode is not possible at this point
+        // because we've already corrupted state by relocating
+        return -5;  // Phase 2 failed
+    }
+
+legacy_mode:
+    // =========================================================================
+    // LEGACY MODE: Pool-based allocation (visible in BigPool)
+    // =========================================================================
+    // This is the fallback when MDL allocation is not available or fails.
+    // VMX resources will be allocated using KernelAllocateContiguous which
+    // creates visible BigPool entries.
+
+    // Allocate VMX resources using legacy pool allocation
     status = AllocateResources();
     if (OMBRA_FAILED(status)) {
         return -3;  // Resource allocation failed
@@ -626,7 +903,7 @@ int HvEntry(void* MmGetSystemRoutineAddress) {
         return -4;  // Initialization failed
     }
 
-    return 0;  // Success
+    return 0;  // Success (legacy mode)
 }
 
 // =============================================================================
