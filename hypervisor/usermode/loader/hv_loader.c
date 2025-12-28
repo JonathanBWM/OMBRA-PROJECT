@@ -12,6 +12,7 @@
 
 #include "hv_loader.h"
 #include "pe_utils.h"
+#include "pe_parser.h"
 #include "pe_relocs.h"
 #include "cleanup.h"
 #include "../byovd/supdrv.h"
@@ -26,6 +27,66 @@
 // =============================================================================
 
 typedef int (*FN_HvEntry)(void* MmGetSystemRoutineAddress);
+
+// =============================================================================
+// .ombra Section Bootstrap Structure (must match shared/types.h OMBRA_BOOTSTRAP)
+// =============================================================================
+
+typedef struct _LOADER_OMBRA_BOOTSTRAP {
+    U64 Magic;          // 'OMBR' = 0x524D424F
+    U64 Version;        // 1
+    U64 ParamsPtr;      // We store MmGetSystemRoutineAddress here directly
+    U64 Reserved[5];
+} LOADER_OMBRA_BOOTSTRAP;
+
+#define OMBRA_MAGIC 0x524D424F
+
+// =============================================================================
+// Patch .ombra Section with MmGetSystemRoutineAddress
+// =============================================================================
+//
+// The hypervisor's .ombra section contains g_Bootstrap which expects ParamsPtr
+// to be set. In the new self-contained design, we store MmGetSystemRoutineAddress
+// directly in ParamsPtr (instead of a pointer to HV_INIT_PARAMS).
+
+static BOOL PatchOmbraSection(void* image, U32 imageSize, PE_INFO* peInfo, U64 mmGetSystemRoutineAddress) {
+    // Find .ombra section
+    PE_SECTION_INFO* ombraSection = PeGetSection(peInfo, ".ombra");
+    if (!ombraSection) {
+        printf("[!] .ombra section not found in hypervisor\n");
+        return FALSE;
+    }
+
+    // Validate section size
+    if (ombraSection->VirtualSize < sizeof(LOADER_OMBRA_BOOTSTRAP)) {
+        printf("[!] .ombra section too small: %u bytes\n", ombraSection->VirtualSize);
+        return FALSE;
+    }
+
+    // Get pointer to .ombra in our image copy
+    LOADER_OMBRA_BOOTSTRAP* bootstrap = (LOADER_OMBRA_BOOTSTRAP*)((U8*)image + ombraSection->Rva);
+
+    // Verify magic
+    if (bootstrap->Magic != OMBRA_MAGIC) {
+        printf("[!] .ombra magic mismatch: expected 0x%X, got 0x%llX\n",
+               OMBRA_MAGIC, bootstrap->Magic);
+        return FALSE;
+    }
+
+    // Verify version
+    if (bootstrap->Version != 1) {
+        printf("[!] .ombra version mismatch: expected 1, got %llu\n", bootstrap->Version);
+        return FALSE;
+    }
+
+    // Patch ParamsPtr with MmGetSystemRoutineAddress
+    bootstrap->ParamsPtr = mmGetSystemRoutineAddress;
+
+    printf("[+] Patched .ombra section @ RVA 0x%X: ParamsPtr=0x%llX\n",
+           ombraSection->Rva, mmGetSystemRoutineAddress);
+
+    return TRUE;
+}
 
 // =============================================================================
 // Resolve MmGetSystemRoutineAddress
@@ -115,44 +176,32 @@ static BOOL AllocateHypervisorImage(HV_LOADER_CTX* ctx, U32 hvImageSize) {
 // =============================================================================
 // Execute Hypervisor Entry Point
 // =============================================================================
+//
+// Uses standard DrvLdrLoad (5 params). MmGetSystemRoutineAddress is passed
+// via the .ombra section which was patched before this function is called.
+// The hypervisor's OmbraModuleInit reads ParamsPtr from g_Bootstrap.
 
 static BOOL ExecuteHypervisorEntry(HV_LOADER_CTX* ctx, void* hvImage, U32 hvImageSize,
-                                   U64 mmGetSystemRoutineAddress) {
-    // Get entry point RVA
-    uint32_t entryRva;
-    if (!PeGetEntryPoint(hvImage, hvImageSize, &entryRva)) {
-        printf("[-] Failed to get entry point from PE\n");
-        return FALSE;
-    }
-    printf("[*] Entry point RVA: 0x%X\n", entryRva);
-
-    // Calculate entry point kernel address
-    void* entryPoint = (U8*)ctx->ImageBase + entryRva;
-    printf("[*] Entry point (HvEntry) @ 0x%p\n", entryPoint);
-
-    // The new hypervisor entry point signature is:
-    //   int HvEntry(void* MmGetSystemRoutineAddress)
-    //
-    // We need to pass MmGetSystemRoutineAddress as the first argument.
-    // The BYOVD LDR_LOAD mechanism calls the entry point with whatever
-    // we provide in the start context.
-
-    // Prepare argument: MmGetSystemRoutineAddress pointer
-    printf("[*] Passing MmGetSystemRoutineAddress = 0x%llX to HvEntry\n", mmGetSystemRoutineAddress);
+                                   PE_INFO* peInfo) {
+    // Calculate entry point kernel address from PE_INFO
+    void* entryPoint = (U8*)ctx->ImageBase + peInfo->EntryPointRva;
+    printf("[*] Entry point RVA: 0x%X\n", peInfo->EntryPointRva);
+    printf("[*] Entry point (OmbraModuleInit) @ 0x%p\n", entryPoint);
 
     // LDR_LOAD: copy image and invoke entry point
-    // Note: We pass the MmGetSystemRoutineAddress as the "driver object" argument
-    // which becomes the first parameter to the entry point function.
-    DRV_STATUS status = DrvLdrLoadWithArg(&ctx->Driver, ctx->ImageBase,
-                                           hvImage, hvImageSize, entryPoint,
-                                           (void*)mmGetSystemRoutineAddress);
+    // MmGetSystemRoutineAddress was already patched into the .ombra section.
+    // OmbraModuleInit will read it from g_Bootstrap.ParamsPtr.
+    printf("[*] Loading hypervisor into kernel (MmGetSystemRoutineAddress via .ombra)...\n");
+
+    DRV_STATUS status = DrvLdrLoad(&ctx->Driver, ctx->ImageBase,
+                                   hvImage, hvImageSize, entryPoint);
     if (status != DRV_SUCCESS) {
         printf("[-] LDR_LOAD failed: %s\n", DrvStatusString(status));
         DrvLdrFree(&ctx->Driver, ctx->ImageBase);
         ctx->ImageBase = NULL;
         return FALSE;
     }
-    printf("[+] LDR_LOAD: hypervisor loaded and HvEntry called\n");
+    printf("[+] LDR_LOAD: hypervisor loaded and OmbraModuleInit called\n");
 
     return TRUE;
 }
@@ -183,17 +232,27 @@ BOOL HvLoaderInit(HV_LOADER_CTX* ctx, const wchar_t* driverPath) {
 
 BOOL HvLoaderLoad(HV_LOADER_CTX* ctx, const void* hvImage, U32 hvImageSize) {
     U64 mmGetSystemRoutineAddress = 0;
+    PE_INFO peInfo = {0};
 
     printf("[*] Loading hypervisor (%u bytes) - self-contained mode\n", hvImageSize);
     printf("[*] Hypervisor will resolve symbols and allocate resources internally\n");
 
-    // 1. Resolve MmGetSystemRoutineAddress - the bootstrap function
+    // 1. Parse PE to get section info and relocation data
+    printf("[*] Parsing hypervisor PE...\n");
+    if (!PeParse(hvImage, hvImageSize, &peInfo)) {
+        printf("[-] Failed to parse hypervisor PE\n");
+        return FALSE;
+    }
+    printf("[+] PE parsed: ImageBase=0x%llX, EntryRVA=0x%X, Sections=%u\n",
+           peInfo.ImageBase, peInfo.EntryPointRva, peInfo.SectionCount);
+
+    // 2. Resolve MmGetSystemRoutineAddress - the bootstrap function
     printf("[*] Resolving bootstrap function...\n");
     if (!ResolveMmGetSystemRoutineAddress(&ctx->Driver, &mmGetSystemRoutineAddress)) {
         return FALSE;
     }
 
-    // 2. Make a copy of image to apply relocations
+    // 3. Make a copy of image for modifications (relocations + .ombra patching)
     void* hvImageCopy = malloc(hvImageSize);
     if (!hvImageCopy) {
         printf("[-] Failed to allocate image copy\n");
@@ -201,26 +260,41 @@ BOOL HvLoaderLoad(HV_LOADER_CTX* ctx, const void* hvImage, U32 hvImageSize) {
     }
     memcpy(hvImageCopy, hvImage, hvImageSize);
 
-    // 3. Allocate kernel memory for hypervisor
+    // 4. Patch .ombra section with MmGetSystemRoutineAddress
+    // This allows the hypervisor to bootstrap without needing DrvLdrLoadWithArg
+    printf("[*] Patching .ombra bootstrap section...\n");
+    if (!PatchOmbraSection(hvImageCopy, hvImageSize, &peInfo, mmGetSystemRoutineAddress)) {
+        printf("[!] Warning: Could not patch .ombra section\n");
+        printf("    Hypervisor may fail to initialize without MmGetSystemRoutineAddress\n");
+        // Continue anyway - maybe legacy params are set up differently
+    }
+
+    // 5. Allocate kernel memory for hypervisor
     printf("[*] Allocating kernel memory for hypervisor...\n");
     if (!AllocateHypervisorImage(ctx, hvImageSize)) {
         free(hvImageCopy);
         return FALSE;
     }
 
-    // 4. Apply relocations to the image copy based on new base
-    printf("[*] Applying PE relocations...\n");
-    if (!PeApplyRelocations(hvImageCopy, hvImageSize, (U64)ctx->ImageBase)) {
+    // 6. Apply relocations to the image copy based on new kernel base
+    // Update peInfo.ImageBase to reflect the new kernel address
+    printf("[*] Applying PE relocations (delta from 0x%llX to 0x%p)...\n",
+           peInfo.ImageBase, ctx->ImageBase);
+    peInfo.ImageBase = (U64)ctx->ImageBase;  // Update for relocation delta calculation
+
+    if (!ApplyRelocations(hvImageCopy, &peInfo, (U64)ctx->ImageBase)) {
         printf("[-] Failed to apply relocations\n");
         free(hvImageCopy);
         DrvLdrFree(&ctx->Driver, ctx->ImageBase);
         ctx->ImageBase = NULL;
         return FALSE;
     }
+    printf("[+] Relocations applied successfully\n");
 
-    // 5. Execute hypervisor entry point with MmGetSystemRoutineAddress
-    printf("[*] Executing HvEntry...\n");
-    if (!ExecuteHypervisorEntry(ctx, hvImageCopy, hvImageSize, mmGetSystemRoutineAddress)) {
+    // 7. Execute hypervisor entry point (OmbraModuleInit)
+    // MmGetSystemRoutineAddress is already in .ombra section
+    printf("[*] Executing OmbraModuleInit...\n");
+    if (!ExecuteHypervisorEntry(ctx, hvImageCopy, hvImageSize, &peInfo)) {
         free(hvImageCopy);
         return FALSE;
     }

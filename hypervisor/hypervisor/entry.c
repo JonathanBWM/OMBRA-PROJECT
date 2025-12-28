@@ -571,19 +571,21 @@ __declspec(dllexport)
 int OmbraModuleInit(void* ignored) {
     (void)ignored;
 
-    // Check if legacy params were patched
+    // Check if .ombra section was patched with MmGetSystemRoutineAddress
+    // In the self-contained design, the loader stores MmGetSystemRoutineAddress
+    // directly in ParamsPtr (not as a pointer to HV_INIT_PARAMS).
     if (g_Bootstrap.Magic == 0x524D424F &&
         g_Bootstrap.Version == 1 &&
         g_Bootstrap.ParamsPtr != 0) {
 
-        HV_INIT_PARAMS* params = (HV_INIT_PARAMS*)g_Bootstrap.ParamsPtr;
-
-        // Extract MmGetSystemRoutineAddress from legacy params if available
-        // For now, just call HvEntry with NULL and hope it works
-        // The loader should switch to the new HvEntry interface
+        // ParamsPtr contains MmGetSystemRoutineAddress directly
+        // Store it in g_KernelSymbols for HvEntry to use
+        g_KernelSymbols.MmGetSystemRoutineAddress =
+            (FN_MmGetSystemRoutineAddress)g_Bootstrap.ParamsPtr;
     }
 
-    // Fall through to self-contained initialization
+    // Call HvEntry - it will use g_KernelSymbols.MmGetSystemRoutineAddress
+    // If .ombra was patched correctly, MmGetSystemRoutineAddress is already set
     return HvEntry(NULL);
 }
 
