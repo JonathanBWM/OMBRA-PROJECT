@@ -114,7 +114,7 @@ jobs:
         echo.
 
         link.exe /nologo /NODEFAULTLIB /FORCE:MULTIPLE ^
-          /ENTRY:OmbraModuleInit /OUT:ombra_payload.sys ^
+          /SUBSYSTEM:NATIVE /ENTRY:OmbraModuleInit /OUT:ombra_payload.sys ^
           hypervisor.lib
         if %ERRORLEVEL% neq 0 exit /b 1
 
