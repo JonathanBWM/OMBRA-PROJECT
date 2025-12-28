@@ -385,7 +385,11 @@ BOOL HvLoaderLoad(HV_LOADER_CTX* ctx, const void* hvImage, U32 hvImageSize) {
         printf("[-] Failed to allocate image copy\n");
         return FALSE;
     }
+    printf("[DEBUG] memcpy(%p, %p, %u) about to start\n", hvImageCopy, hvImage, hvImageSize);
+    fflush(stdout);
     memcpy(hvImageCopy, hvImage, hvImageSize);
+    printf("[DEBUG] memcpy complete\n");
+    fflush(stdout);
 
     // 4. Patch .ombra section with MmGetSystemRoutineAddress
     printf("[*] Patching .ombra bootstrap section...\n");
