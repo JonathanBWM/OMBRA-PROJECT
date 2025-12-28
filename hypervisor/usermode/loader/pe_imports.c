@@ -1,4 +1,5 @@
 #include "pe_imports.h"
+#include "../byovd/nt_defs.h"  // For NtGetKernelExport - usermode symbol resolution
 #include <stdio.h>
 #include <string.h>
 
@@ -59,10 +60,11 @@ bool ResolveImports(PSUPDRV_CTX ctx, PE_INFO* peInfo) {
         // Normalize kernel module names to generic kernel symbol lookup
         const char* lookupName = imp->FunctionName;
 
-        void* addr = NULL;
-        bool success = SupDrv_GetSymbol(ctx, lookupName, &addr);
+        // Use usermode symbol resolution (NtGetKernelExport) instead of driver IOCTL
+        // SUP_IOCTL_LDR_GET_SYMBOL is not implemented in LDPlayer driver build
+        UINT64 addr = NtGetKernelExport(lookupName);
 
-        if (success && addr != NULL) {
+        if (addr != 0) {
             imp->ResolvedAddress = (uint64_t)addr;
             resolved++;
 
@@ -128,12 +130,12 @@ bool ResolveCommonSymbols(PSUPDRV_CTX ctx, COMMON_SYMBOLS* syms) {
 
     for (uint32_t i = 0; COMMON_IMPORTS[i] != NULL; i++) {
         const char* name = COMMON_IMPORTS[i];
-        void* addr = NULL;
 
-        bool success = SupDrv_GetSymbol(ctx, name, &addr);
+        // Use usermode symbol resolution instead of driver IOCTL
+        UINT64 addr = NtGetKernelExport(name);
 
-        if (success && addr != NULL) {
-            *symPtrs[i] = (uint64_t)addr;
+        if (addr != 0) {
+            *symPtrs[i] = addr;
             resolved++;
 
             // Print first few for confirmation
