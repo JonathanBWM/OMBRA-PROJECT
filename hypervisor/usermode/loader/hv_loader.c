@@ -155,8 +155,8 @@ static BOOL Apply618Bypass(void) {
 // =============================================================================
 
 static BOOL AllocateHypervisorImage(HV_LOADER_CTX* ctx, U32 hvImageSize) {
-    // Apply -618 bypass first
-    Apply618Bypass();
+    // NOTE: -618 bypass is now applied in HvLoaderInit() BEFORE driver start
+    // This ensures DriverEntry's IoCreateDevice succeeds
 
     // LDR_OPEN: request kernel memory for image
     void* imageBase = NULL;
@@ -215,10 +215,55 @@ BOOL HvLoaderInit(HV_LOADER_CTX* ctx, const wchar_t* driverPath) {
 
     printf("[*] Initializing hypervisor loader (self-contained mode)\n");
 
-    // Initialize driver interface
-    if (DrvInitialize(&ctx->Driver, driverPath) != DRV_SUCCESS) {
-        printf("[-] Failed to initialize driver interface\n");
+    // Step 1: Install driver service (but DON'T start yet)
+    printf("[*] Installing driver service...\n");
+    DRV_STATUS status = DrvInstallDriver(&ctx->Driver, driverPath);
+    if (status != DRV_SUCCESS) {
+        printf("[-] Failed to install driver: %s\n", DrvStatusString(status));
         return FALSE;
+    }
+    printf("[+] Driver service installed\n");
+
+    // Step 2: Apply -618 bypass BEFORE starting driver
+    // This patches validation flags so DriverEntry's IoCreateDevice succeeds
+    printf("[*] Applying -618 bypass before driver start...\n");
+    Apply618Bypass();
+
+    // Step 3: NOW start the driver (validation flags are patched)
+    printf("[*] Starting driver service...\n");
+    status = DrvStartDriver(&ctx->Driver);
+    if (status != DRV_SUCCESS) {
+        printf("[-] Failed to start driver: %s\n", DrvStatusString(status));
+        DrvUnloadDriver(&ctx->Driver);
+        return FALSE;
+    }
+    printf("[+] Driver service started\n");
+
+    // Step 4: Open device handle (device should now exist)
+    printf("[*] Opening device handle...\n");
+    status = DrvOpenDevice(&ctx->Driver);
+    if (status != DRV_SUCCESS) {
+        printf("[-] Failed to open device: %s\n", DrvStatusString(status));
+        DrvUnloadDriver(&ctx->Driver);
+        return FALSE;
+    }
+    printf("[+] Device handle opened\n");
+
+    // Step 5: Establish session
+    printf("[*] Establishing session...\n");
+    status = DrvEstablishSession(&ctx->Driver);
+    if (status != DRV_SUCCESS) {
+        printf("[-] Failed to establish session: %s\n", DrvStatusString(status));
+        CloseHandle(ctx->Driver.hDevice);
+        DrvUnloadDriver(&ctx->Driver);
+        return FALSE;
+    }
+    printf("[+] Session established\n");
+
+    // Step 6: Cache VMX MSRs (non-fatal if fails)
+    status = DrvGetVmxMsrs(&ctx->Driver, &ctx->Driver.VmxMsrs);
+    if (status != DRV_SUCCESS) {
+        printf("[!] Warning: Could not cache VMX MSRs\n");
     }
 
     // Get CPU count (for display purposes only - hypervisor gets this itself)

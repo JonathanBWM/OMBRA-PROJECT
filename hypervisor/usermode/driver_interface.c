@@ -37,7 +37,9 @@ static void FillHeader(SUPREQHDR* hdr, DRV_CONTEXT* ctx, uint32_t cbIn, uint32_t
 // Service Management
 // =============================================================================
 
-DRV_STATUS DrvLoadDriver(DRV_CONTEXT* ctx, const wchar_t* driverPath) {
+// Install driver service WITHOUT starting it
+// This allows -618 bypass to be applied before DriverEntry runs
+DRV_STATUS DrvInstallDriver(DRV_CONTEXT* ctx, const wchar_t* driverPath) {
     // Open Service Control Manager
     ctx->hSCM = OpenSCManagerW(NULL, NULL, SC_MANAGER_ALL_ACCESS);
     if (!ctx->hSCM) {
@@ -85,7 +87,18 @@ DRV_STATUS DrvLoadDriver(DRV_CONTEXT* ctx, const wchar_t* driverPath) {
         }
     }
 
-    // Start the service
+    // NOTE: Service is installed but NOT started
+    // Caller must apply -618 bypass, then call DrvStartDriver()
+    return DRV_SUCCESS;
+}
+
+// Start an already-installed driver service
+// Call this AFTER applying -618 bypass
+DRV_STATUS DrvStartDriver(DRV_CONTEXT* ctx) {
+    if (!ctx->hService) {
+        return DRV_ERROR_SERVICE_CREATE;
+    }
+
     if (!StartServiceW(ctx->hService, 0, NULL)) {
         DWORD err = GetLastError();
         if (err != ERROR_SERVICE_ALREADY_RUNNING) {
@@ -101,6 +114,15 @@ DRV_STATUS DrvLoadDriver(DRV_CONTEXT* ctx, const wchar_t* driverPath) {
     }
 
     return DRV_SUCCESS;
+}
+
+// Legacy function - install AND start (for backward compat)
+DRV_STATUS DrvLoadDriver(DRV_CONTEXT* ctx, const wchar_t* driverPath) {
+    DRV_STATUS status = DrvInstallDriver(ctx, driverPath);
+    if (status != DRV_SUCCESS) {
+        return status;
+    }
+    return DrvStartDriver(ctx);
 }
 
 DRV_STATUS DrvUnloadDriver(DRV_CONTEXT* ctx) {

@@ -87,8 +87,10 @@ typedef struct _DRV_CONTEXT {
 DRV_STATUS  DrvInitialize(DRV_CONTEXT* ctx, const wchar_t* driverPath);
 void        DrvCleanup(DRV_CONTEXT* ctx);
 
-// Service Management
-DRV_STATUS  DrvLoadDriver(DRV_CONTEXT* ctx, const wchar_t* driverPath);
+// Service Management (split for -618 bypass timing)
+DRV_STATUS  DrvInstallDriver(DRV_CONTEXT* ctx, const wchar_t* driverPath);  // Install only
+DRV_STATUS  DrvStartDriver(DRV_CONTEXT* ctx);                                // Start only
+DRV_STATUS  DrvLoadDriver(DRV_CONTEXT* ctx, const wchar_t* driverPath);      // Install+start (legacy)
 DRV_STATUS  DrvUnloadDriver(DRV_CONTEXT* ctx);
 
 // Session Management
