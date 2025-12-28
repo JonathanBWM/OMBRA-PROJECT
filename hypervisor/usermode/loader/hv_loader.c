@@ -391,8 +391,14 @@ BOOL HvLoaderLoad(HV_LOADER_CTX* ctx, const void* hvImage, U32 hvImageSize) {
     printf("[DEBUG] memcpy complete\n");
     fflush(stdout);
 
+    printf("[DEBUG] About to print Patching message...\n");
+    fflush(stdout);
+
     // 4. Patch .ombra section with MmGetSystemRoutineAddress
     printf("[*] Patching .ombra bootstrap section...\n");
+    fflush(stdout);
+    printf("[DEBUG] Patching message printed OK\n");
+    fflush(stdout);
     if (!PatchOmbraSection(hvImageCopy, hvImageSize, &peInfo, mmGetSystemRoutineAddress)) {
         printf("[!] Warning: Could not patch .ombra section\n");
         printf("    Hypervisor may fail to initialize without MmGetSystemRoutineAddress\n");
