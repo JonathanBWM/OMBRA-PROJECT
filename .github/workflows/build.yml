@@ -80,7 +80,8 @@ jobs:
 
         cl.exe /nologo /c /O2 /W4 /WX- /GS- /I..\shared /Foobj\ ^
           crt.c entry.c vmx.c vmcs.c ept.c exit_dispatch.c timing.c ^
-          hooks.c debug.c nested.c spoof.c
+          hooks.c debug.c nested.c spoof.c ^
+          kernel_resolve.c self_info.c phys_pool.c va_finder.c
         if %ERRORLEVEL% neq 0 exit /b 1
         echo Core modules built
 
@@ -105,17 +106,18 @@ jobs:
         echo Linking hypervisor as minimal PE (position-independent blob)...
         echo.
         echo This is NOT a Windows driver. It has:
-        echo   - ZERO kernel imports (all APIs via params struct)
+        echo   - Self-contained initialization (memhv pattern)
+        echo   - Runtime symbol resolution via MmGetSystemRoutineAddress
         echo   - .ombra section (for bootstrap struct)
-        echo   - Entry point: OmbraModuleInit
+        echo   - Entry point: HvEntry
         echo.
         echo Linker flags:
         echo   /NODEFAULTLIB - no CRT or WDK libraries
         echo   /SUBSYSTEM:NATIVE - required for minimal PE
-        echo   /ENTRY:OmbraModuleInit - custom entry point
+        echo   /ENTRY:HvEntry - new self-contained entry point
         echo.
 
-        link.exe /nologo /NODEFAULTLIB /SUBSYSTEM:NATIVE /ENTRY:OmbraModuleInit ^
+        link.exe /nologo /NODEFAULTLIB /SUBSYSTEM:NATIVE /ENTRY:HvEntry ^
           /OUT:ombra_hv.sys hypervisor.lib
         if %ERRORLEVEL% neq 0 exit /b 1
 

@@ -4,56 +4,67 @@
 #include "../driver_interface.h"
 #include "../../shared/types.h"
 
-// Configuration
-#define HOST_STACK_SIZE     0x4000      // 16KB per CPU
-#define HOST_STACK_PAGES    (HOST_STACK_SIZE / 0x1000)
-#define EPT_TABLES_PAGES    512         // 2MB for identity mapping
-#define DEBUG_BUFFER_PAGES  16          // 64KB debug ring buffer
-
-// Memory layout tracking
-typedef struct _HV_MEMORY_LAYOUT {
-    // Per-CPU (contiguous, need physical addresses)
-    ALLOC_INFO  VmxonRegions;       // CpuCount pages
-    ALLOC_INFO  VmcsRegions;        // CpuCount pages
-    ALLOC_INFO  HostStacks;         // CpuCount * STACK_PAGES pages
-
-    // Shared (contiguous)
-    ALLOC_INFO  MsrBitmap;          // 1 page
-    ALLOC_INFO  EptTables;          // EPT_TABLES_PAGES pages
-
-    // Params page
-    ALLOC_INFO  ParamsPage;         // 1 page for HV_INIT_PARAMS
-
-    // Self-protection
-    ALLOC_INFO  BlankPage;          // 1 page, zeroed for memory hiding
-
-    // Debug (non-paged OK)
-    ALLOC_INFO  DebugBuffer;        // DEBUG_BUFFER_PAGES pages
-} HV_MEMORY_LAYOUT;
+// =============================================================================
+// Hypervisor Loader - Self-Contained Design
+// =============================================================================
+//
+// With the self-contained hypervisor architecture, the loader is simplified:
+// 1. Load hypervisor PE into kernel memory via BYOVD
+// 2. Resolve MmGetSystemRoutineAddress
+// 3. Call HvEntry(MmGetSystemRoutineAddress)
+//
+// The hypervisor then:
+// - Resolves all other kernel symbols at runtime
+// - Allocates VMX structures (VMXON, VMCS, stacks, EPT, etc.)
+// - Initializes VMX on all CPUs via IPI broadcast
+//
+// This eliminates the need for HV_MEMORY_LAYOUT and complex parameter building
+// in the loader, making the system more robust and easier to debug.
 
 // Context for loaded hypervisor
 typedef struct _HV_LOADER_CTX {
-    DRV_CONTEXT         Driver;
-    U32                 CpuCount;
-    HV_MEMORY_LAYOUT    Memory;
+    DRV_CONTEXT         Driver;         // BYOVD driver context
+    U32                 CpuCount;       // CPU count (for display)
 
     // Hypervisor module
     void*               ImageBase;      // Kernel address from LDR_OPEN
-    U32                 ImageSize;
+    U32                 ImageSize;      // Size of mapped image
 
     // State
-    BOOL                Loaded;
-    BOOL                Running;
+    BOOL                Loaded;         // HvEntry called successfully
+    BOOL                Running;        // Hypervisor is active
 } HV_LOADER_CTX;
 
+// =============================================================================
 // Public API
+// =============================================================================
+
+// Initialize the loader context.
+// driverPath: Path to BYOVD driver (Ld9BoxSup.sys) or NULL for embedded
 BOOL HvLoaderInit(HV_LOADER_CTX* ctx, const wchar_t* driverPath);
+
+// Load and start the hypervisor.
+// hvImage: Pointer to hypervisor.sys PE file in memory
+// hvImageSize: Size of the PE file
 BOOL HvLoaderLoad(HV_LOADER_CTX* ctx, const void* hvImage, U32 hvImageSize);
+
+// Unload the hypervisor (issues VMCALL_UNLOAD).
 BOOL HvLoaderUnload(HV_LOADER_CTX* ctx);
+
+// Check if hypervisor is running.
 BOOL HvLoaderIsRunning(HV_LOADER_CTX* ctx);
+
+// Cleanup all resources.
 void HvLoaderCleanup(HV_LOADER_CTX* ctx);
 
-// Debug buffer access
+// =============================================================================
+// Debug Buffer Access (deprecated with self-contained design)
+// =============================================================================
+//
+// With self-contained design, the hypervisor allocates its own debug buffer.
+// Debug output is accessed via VMCALL interface, not direct memory mapping.
+// These functions return NULL/0 for compatibility.
+
 void* HvLoaderGetDebugBuffer(HV_LOADER_CTX* ctx);
 U64   HvLoaderGetDebugBufferSize(HV_LOADER_CTX* ctx);
 

@@ -1,9 +1,24 @@
 #include <windows.h>
 #include "resource.h"
 
-// Vulnerable drivers - embedded as binary resources
+// =============================================================================
+// Embedded Binary Resources
+// =============================================================================
+//
+// All drivers are embedded as RCDATA resources for anti-forensics.
+// No .sys files are written to disk during normal operation.
+
+// BYOVD vulnerable drivers - provide kernel code execution
 IDR_DRIVER_LD9BOXSUP      RCDATA "..\\..\\resources\\Ld9BoxSup.sys"
 IDR_DRIVER_THROTTLESTOP   RCDATA "..\\..\\resources\\ThrottleStop.sys"
 
-// Hypervisor payload (PE driver with .ombra section)
+// Hypervisor payload (self-contained PE, entry point: HvEntry)
+// - Resolves kernel symbols at runtime via MmGetSystemRoutineAddress
+// - Allocates VMX resources internally
+// - .ombra section for legacy bootstrap compatibility
 IDR_PAYLOAD_HYPERVISOR    RCDATA "..\\..\\resources\\hypervisor.sys"
+
+// OmbraDriver (Windows kernel driver for usermode communication)
+// - Loaded via standard SCM after hypervisor is active
+// - Communicates with hypervisor via VMCALL interface
+IDR_PAYLOAD_OMBRADRIVER   RCDATA "..\\..\\resources\\ombradriver.sys"

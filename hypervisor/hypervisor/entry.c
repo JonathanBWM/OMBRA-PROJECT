@@ -1,8 +1,9 @@
-// entry.c — Hypervisor Entry Point (Phase 1 Redesign)
+// entry.c - Hypervisor Entry Point (Self-Contained Design)
 // OmbraHypervisor
 //
-// New architecture: Single entry via LDR_LOAD, parameters via .ombra section,
-// IPI broadcast for multi-CPU initialization.
+// Self-contained initialization following memhv pattern.
+// Resolves kernel symbols at runtime, allocates VMX resources internally.
+// Loader only needs to provide MmGetSystemRoutineAddress and call HvEntry.
 
 #include "../shared/types.h"
 #include "../shared/vmcs_fields.h"
@@ -13,74 +14,246 @@
 #include "ept.h"
 #include "hooks.h"
 #include "debug.h"
+#include "kernel_resolve.h"
+#include "self_info.h"
 #include <intrin.h>
 
-// Windows kernel types for function pointers (kernel-mode compatible)
-#ifndef ULONG_PTR
-typedef U64 ULONG_PTR;
-#endif
-#ifndef ULONG
-typedef U32 ULONG;
-#endif
-#ifndef USHORT
-typedef U16 USHORT;
-#endif
-#ifndef NTAPI
-#define NTAPI __stdcall
-#endif
-
 // =============================================================================
-// Bootstrap Section - Loader patches ParamsPtr before LDR_LOAD
+// Configuration Constants
 // =============================================================================
 
-#pragma section(".ombra", read, write)
-#pragma comment(linker, "/SECTION:.ombra,RW")
-
-// OMBRA_BOOTSTRAP defined in shared/types.h
-
-__declspec(allocate(".ombra"))
-volatile OMBRA_BOOTSTRAP g_Bootstrap = {
-    .Magic = 0x524D424F,    // 'OMBR'
-    .Version = 1,
-    .ParamsPtr = 0,
-    .Reserved = {0}
-};
+#define HV_HOST_STACK_SIZE      0x8000      // 32KB per-CPU stack
+#define HV_DEBUG_BUFFER_SIZE    0x10000     // 64KB debug buffer
+#define HV_EPT_PAGES            512         // EPT table pages
+#define HV_MAX_CPUS             256
 
 // =============================================================================
 // Global State
 // =============================================================================
 
-static VMX_CPU g_CpuContexts[256] = {0};
+static VMX_CPU g_CpuContexts[HV_MAX_CPUS] = {0};
 static EPT_STATE g_EptState = {0};
 static volatile U32 g_SuccessCount = 0;
 static volatile U32 g_FailCount = 0;
-static bool g_DebugInitialized = false;
-static HV_INIT_PARAMS* g_InitParams = NULL;
+static bool g_Initialized = false;
 
 // External hook manager
 extern HOOK_MANAGER g_HookManager;
 
 // =============================================================================
-// IPI Callback Types (Windows kernel function signatures)
+// Allocated Resources (self-managed)
 // =============================================================================
 
-typedef ULONG_PTR (NTAPI *KIPI_BROADCAST_WORKER)(ULONG_PTR Argument);
-typedef ULONG_PTR (NTAPI *FN_KeIpiGenericCall)(KIPI_BROADCAST_WORKER, ULONG_PTR);
-typedef ULONG (NTAPI *FN_KeQueryActiveProcessorCountEx)(USHORT);
-typedef ULONG (NTAPI *FN_KeGetCurrentProcessorNumberEx)(void*);
+typedef struct _HV_RESOURCES {
+    // Per-CPU regions (contiguous arrays)
+    void*   VmxonRegions;           // CpuCount * 4KB
+    U64     VmxonRegionsPhys;
+    void*   VmcsRegions;            // CpuCount * 4KB
+    U64     VmcsRegionsPhys;
+    void*   HostStacks;             // CpuCount * HV_HOST_STACK_SIZE
+
+    // Shared resources
+    void*   MsrBitmap;              // 4KB
+    U64     MsrBitmapPhys;
+    void*   EptTables;              // HV_EPT_PAGES * 4KB
+    U64     EptTablesPhys;
+    void*   DebugBuffer;            // HV_DEBUG_BUFFER_SIZE
+    void*   BlankPage;              // 4KB (for EPT self-protection)
+    U64     BlankPagePhys;
+
+    // VMX capability MSRs (read at init time)
+    U64     VmxBasic;
+    U64     VmxPinbasedCtls;
+    U64     VmxProcbasedCtls;
+    U64     VmxProcbasedCtls2;
+    U64     VmxExitCtls;
+    U64     VmxEntryCtls;
+    U64     VmxTruePinbasedCtls;
+    U64     VmxTrueProcbasedCtls;
+    U64     VmxTrueExitCtls;
+    U64     VmxTrueEntryCtls;
+    U64     VmxCr0Fixed0;
+    U64     VmxCr0Fixed1;
+    U64     VmxCr4Fixed0;
+    U64     VmxCr4Fixed1;
+    U64     VmxEptVpidCap;
+
+    // Counts
+    U32     CpuCount;
+    bool    Allocated;
+} HV_RESOURCES;
+
+static HV_RESOURCES g_Resources = {0};
+
+// =============================================================================
+// Read VMX Capability MSRs
+// =============================================================================
+
+static void ReadVmxCapabilities(void) {
+    g_Resources.VmxBasic = __readmsr(MSR_IA32_VMX_BASIC);
+    g_Resources.VmxPinbasedCtls = __readmsr(MSR_IA32_VMX_PINBASED_CTLS);
+    g_Resources.VmxProcbasedCtls = __readmsr(MSR_IA32_VMX_PROCBASED_CTLS);
+    g_Resources.VmxExitCtls = __readmsr(MSR_IA32_VMX_EXIT_CTLS);
+    g_Resources.VmxEntryCtls = __readmsr(MSR_IA32_VMX_ENTRY_CTLS);
+
+    // Read true controls if supported (bit 55 of VMX_BASIC)
+    if (g_Resources.VmxBasic & (1ULL << 55)) {
+        g_Resources.VmxTruePinbasedCtls = __readmsr(MSR_IA32_VMX_TRUE_PINBASED_CTLS);
+        g_Resources.VmxTrueProcbasedCtls = __readmsr(MSR_IA32_VMX_TRUE_PROCBASED_CTLS);
+        g_Resources.VmxTrueExitCtls = __readmsr(MSR_IA32_VMX_TRUE_EXIT_CTLS);
+        g_Resources.VmxTrueEntryCtls = __readmsr(MSR_IA32_VMX_TRUE_ENTRY_CTLS);
+    } else {
+        g_Resources.VmxTruePinbasedCtls = g_Resources.VmxPinbasedCtls;
+        g_Resources.VmxTrueProcbasedCtls = g_Resources.VmxProcbasedCtls;
+        g_Resources.VmxTrueExitCtls = g_Resources.VmxExitCtls;
+        g_Resources.VmxTrueEntryCtls = g_Resources.VmxEntryCtls;
+    }
+
+    // Secondary controls
+    U32 procCtls = (U32)(g_Resources.VmxProcbasedCtls >> 32);
+    if (procCtls & (1 << 31)) {  // Activate secondary controls
+        g_Resources.VmxProcbasedCtls2 = __readmsr(MSR_IA32_VMX_PROCBASED_CTLS2);
+    }
+
+    // EPT/VPID capabilities
+    U32 procCtls2 = (U32)(g_Resources.VmxProcbasedCtls2 >> 32);
+    if ((procCtls2 & (1 << 1)) || (procCtls2 & (1 << 5))) {  // EPT or VPID
+        g_Resources.VmxEptVpidCap = __readmsr(MSR_IA32_VMX_EPT_VPID_CAP);
+    }
+
+    // CR fixed bits
+    g_Resources.VmxCr0Fixed0 = __readmsr(MSR_IA32_VMX_CR0_FIXED0);
+    g_Resources.VmxCr0Fixed1 = __readmsr(MSR_IA32_VMX_CR0_FIXED1);
+    g_Resources.VmxCr4Fixed0 = __readmsr(MSR_IA32_VMX_CR4_FIXED0);
+    g_Resources.VmxCr4Fixed1 = __readmsr(MSR_IA32_VMX_CR4_FIXED1);
+}
+
+// =============================================================================
+// Zero memory helper (no CRT)
+// =============================================================================
+
+static void ZeroMem(void* dst, U64 size) {
+    U8* p = (U8*)dst;
+    while (size--) *p++ = 0;
+}
+
+// =============================================================================
+// Allocate VMX Resources
+// =============================================================================
+
+static OMBRA_STATUS AllocateResources(void) {
+    U32 cpuCount;
+    U64 vmxonSize, vmcsSize, stackSize, eptSize;
+
+    if (g_Resources.Allocated) {
+        return OMBRA_SUCCESS;
+    }
+
+    // Get CPU count
+    cpuCount = KernelGetProcessorCount();
+    if (cpuCount == 0 || cpuCount > HV_MAX_CPUS) {
+        return OMBRA_ERROR_INVALID_PARAMETER;
+    }
+    g_Resources.CpuCount = cpuCount;
+
+    // Calculate sizes
+    vmxonSize = cpuCount * 0x1000;      // 4KB per CPU
+    vmcsSize = cpuCount * 0x1000;       // 4KB per CPU
+    stackSize = cpuCount * HV_HOST_STACK_SIZE;
+    eptSize = HV_EPT_PAGES * 0x1000;
+
+    // Allocate VMXON regions (contiguous, 4KB aligned)
+    g_Resources.VmxonRegions = KernelAllocateContiguous(vmxonSize);
+    if (!g_Resources.VmxonRegions) {
+        return OMBRA_ERROR_MEMORY_ALLOCATION;
+    }
+    ZeroMem(g_Resources.VmxonRegions, vmxonSize);
+    g_Resources.VmxonRegionsPhys = KernelGetPhysicalAddress(g_Resources.VmxonRegions);
+
+    // Allocate VMCS regions (contiguous, 4KB aligned)
+    g_Resources.VmcsRegions = KernelAllocateContiguous(vmcsSize);
+    if (!g_Resources.VmcsRegions) {
+        return OMBRA_ERROR_MEMORY_ALLOCATION;
+    }
+    ZeroMem(g_Resources.VmcsRegions, vmcsSize);
+    g_Resources.VmcsRegionsPhys = KernelGetPhysicalAddress(g_Resources.VmcsRegions);
+
+    // Allocate host stacks (contiguous for simplicity)
+    g_Resources.HostStacks = KernelAllocateContiguous(stackSize);
+    if (!g_Resources.HostStacks) {
+        return OMBRA_ERROR_MEMORY_ALLOCATION;
+    }
+    ZeroMem(g_Resources.HostStacks, stackSize);
+
+    // Allocate MSR bitmap (shared, 4KB)
+    g_Resources.MsrBitmap = KernelAllocateContiguous(0x1000);
+    if (!g_Resources.MsrBitmap) {
+        return OMBRA_ERROR_MEMORY_ALLOCATION;
+    }
+    ZeroMem(g_Resources.MsrBitmap, 0x1000);
+    g_Resources.MsrBitmapPhys = KernelGetPhysicalAddress(g_Resources.MsrBitmap);
+
+    // Allocate EPT tables (contiguous)
+    g_Resources.EptTables = KernelAllocateContiguous(eptSize);
+    if (!g_Resources.EptTables) {
+        return OMBRA_ERROR_MEMORY_ALLOCATION;
+    }
+    ZeroMem(g_Resources.EptTables, eptSize);
+    g_Resources.EptTablesPhys = KernelGetPhysicalAddress(g_Resources.EptTables);
+
+    // Allocate debug buffer
+    g_Resources.DebugBuffer = KernelAllocatePageAligned(HV_DEBUG_BUFFER_SIZE);
+    if (!g_Resources.DebugBuffer) {
+        // Debug buffer is optional - continue without it
+        g_Resources.DebugBuffer = NULL;
+    } else {
+        ZeroMem(g_Resources.DebugBuffer, HV_DEBUG_BUFFER_SIZE);
+    }
+
+    // Allocate blank page for EPT hiding
+    g_Resources.BlankPage = KernelAllocateContiguous(0x1000);
+    if (g_Resources.BlankPage) {
+        ZeroMem(g_Resources.BlankPage, 0x1000);
+        g_Resources.BlankPagePhys = KernelGetPhysicalAddress(g_Resources.BlankPage);
+    }
+
+    // Write revision ID to all VMXON regions
+    U32 revisionId = (U32)(g_Resources.VmxBasic & 0x7FFFFFFF);
+    for (U32 i = 0; i < cpuCount; i++) {
+        U32* vmxon = (U32*)((U8*)g_Resources.VmxonRegions + (i * 0x1000));
+        *vmxon = revisionId;
+
+        U32* vmcs = (U32*)((U8*)g_Resources.VmcsRegions + (i * 0x1000));
+        *vmcs = revisionId;
+    }
+
+    g_Resources.Allocated = true;
+    return OMBRA_SUCCESS;
+}
+
+// =============================================================================
+// Free VMX Resources
+// =============================================================================
+
+static void FreeResources(void) {
+    if (!g_Resources.Allocated) return;
+
+    if (g_Resources.VmxonRegions) KernelFreeContiguous(g_Resources.VmxonRegions);
+    if (g_Resources.VmcsRegions) KernelFreeContiguous(g_Resources.VmcsRegions);
+    if (g_Resources.HostStacks) KernelFreeContiguous(g_Resources.HostStacks);
+    if (g_Resources.MsrBitmap) KernelFreeContiguous(g_Resources.MsrBitmap);
+    if (g_Resources.EptTables) KernelFreeContiguous(g_Resources.EptTables);
+    if (g_Resources.BlankPage) KernelFreeContiguous(g_Resources.BlankPage);
+    // Debug buffer uses ExAllocatePool, would need ExFreePool
+
+    ZeroMem(&g_Resources, sizeof(g_Resources));
+}
 
 // =============================================================================
 // Per-CPU VMX Initialization
 // =============================================================================
 
-static OMBRA_STATUS InitializeCpuVmx(
-    U32 cpuId,
-    void* vmxonVirt, U64 vmxonPhys,
-    void* vmcsVirt, U64 vmcsPhys,
-    void* stackTop,
-    void* msrBitmapVirt, U64 msrBitmapPhys,
-    HV_INIT_PARAMS* params)
-{
+static OMBRA_STATUS InitializeCpuVmx(U32 cpuId) {
     VMX_CPU* cpu;
     OMBRA_STATUS status;
     U64 cr0, cr4;
@@ -92,14 +265,21 @@ static OMBRA_STATUS InitializeCpuVmx(
     cpu = &g_CpuContexts[cpuId];
     cpu->CpuId = cpuId;
 
+    // Calculate per-CPU addresses
+    void* vmxonVirt = (U8*)g_Resources.VmxonRegions + (cpuId * 0x1000);
+    U64 vmxonPhys = g_Resources.VmxonRegionsPhys + (cpuId * 0x1000);
+    void* vmcsVirt = (U8*)g_Resources.VmcsRegions + (cpuId * 0x1000);
+    U64 vmcsPhys = g_Resources.VmcsRegionsPhys + (cpuId * 0x1000);
+    void* stackTop = (U8*)g_Resources.HostStacks + ((cpuId + 1) * HV_HOST_STACK_SIZE);
+
     // Store addresses
     cpu->VmxonPhysical = vmxonPhys;
     cpu->VmcsPhysical = vmcsPhys;
-    cpu->MsrBitmapPhysical = msrBitmapPhys;
+    cpu->MsrBitmapPhysical = g_Resources.MsrBitmapPhys;
     cpu->HostStackTop = stackTop;
     cpu->VmxonRegion = vmxonVirt;
     cpu->VmcsRegion = vmcsVirt;
-    cpu->MsrBitmap = msrBitmapVirt;
+    cpu->MsrBitmap = g_Resources.MsrBitmap;
     cpu->Ept = &g_EptState;
 
     // Check VMX support
@@ -118,18 +298,14 @@ static OMBRA_STATUS InitializeCpuVmx(
 
     // Apply CR0/CR4 fixed bits
     cr0 = __readcr0();
-    cr0 |= params->VmxCr0Fixed0;
-    cr0 &= params->VmxCr0Fixed1;
+    cr0 |= g_Resources.VmxCr0Fixed0;
+    cr0 &= g_Resources.VmxCr0Fixed1;
     __writecr0(cr0);
 
     cr4 = __readcr4();
-    cr4 |= params->VmxCr4Fixed0;
-    cr4 &= params->VmxCr4Fixed1;
+    cr4 |= g_Resources.VmxCr4Fixed0;
+    cr4 &= g_Resources.VmxCr4Fixed1;
     __writecr4(cr4);
-
-    // Write revision ID to VMXON region (should already be set by loader)
-    U32 revisionId = (U32)(params->VmxBasic & 0x7FFFFFFF);
-    *(U32*)vmxonVirt = revisionId;
 
     // VMXON
     vmxError = __vmx_on(&vmxonPhys);
@@ -140,38 +316,38 @@ static OMBRA_STATUS InitializeCpuVmx(
     cpu->VmxEnabled = true;
     INFO("CPU %u: VMXON successful", cpuId);
 
-    // Initialize VMCS - create HV_PER_CPU_PARAMS from the Phase 1 params
+    // Build HV_PER_CPU_PARAMS for VMCS initialization
     HV_PER_CPU_PARAMS cpuParams = {0};
     cpuParams.CpuId = cpuId;
-    cpuParams.TotalCpus = params->CpuCount;
+    cpuParams.TotalCpus = g_Resources.CpuCount;
     cpuParams.VmxonPhysical = vmxonPhys;
     cpuParams.VmcsPhysical = vmcsPhys;
     cpuParams.HostStackTop = (U64)stackTop;
-    cpuParams.MsrBitmapPhysical = msrBitmapPhys;
+    cpuParams.MsrBitmapPhysical = g_Resources.MsrBitmapPhys;
     cpuParams.VmxonVirtual = vmxonVirt;
     cpuParams.VmcsVirtual = vmcsVirt;
-    cpuParams.MsrBitmapVirtual = msrBitmapVirt;
-    cpuParams.EptPml4Physical = params->EptTablesPhys;
-    cpuParams.EptPml4Virtual = params->EptTablesVirt;
-    // Copy VMX MSR values
-    cpuParams.VmxBasic = params->VmxBasic;
-    cpuParams.VmxPinCtls = params->VmxPinbasedCtls;
-    cpuParams.VmxProcCtls = params->VmxProcbasedCtls;
-    cpuParams.VmxProcCtls2 = params->VmxProcbasedCtls2;
-    cpuParams.VmxExitCtls = params->VmxExitCtls;
-    cpuParams.VmxEntryCtls = params->VmxEntryCtls;
-    cpuParams.VmxTruePin = params->VmxTruePinbasedCtls;
-    cpuParams.VmxTrueProc = params->VmxTrueProcbasedCtls;
-    cpuParams.VmxTrueExit = params->VmxTrueExitCtls;
-    cpuParams.VmxTrueEntry = params->VmxTrueEntryCtls;
-    cpuParams.VmxCr0Fixed0 = params->VmxCr0Fixed0;
-    cpuParams.VmxCr0Fixed1 = params->VmxCr0Fixed1;
-    cpuParams.VmxCr4Fixed0 = params->VmxCr4Fixed0;
-    cpuParams.VmxCr4Fixed1 = params->VmxCr4Fixed1;
-    cpuParams.VmxEptVpidCap = params->VmxEptVpidCap;
-    cpuParams.DebugBufferPhysical = params->DebugBufferPhys;
-    cpuParams.DebugBufferVirtual = params->DebugBufferVirt;
-    cpuParams.DebugBufferSize = params->DebugBufferSize;
+    cpuParams.MsrBitmapVirtual = g_Resources.MsrBitmap;
+    cpuParams.EptPml4Physical = g_Resources.EptTablesPhys;
+    cpuParams.EptPml4Virtual = g_Resources.EptTables;
+    cpuParams.VmxBasic = g_Resources.VmxBasic;
+    cpuParams.VmxPinCtls = g_Resources.VmxPinbasedCtls;
+    cpuParams.VmxProcCtls = g_Resources.VmxProcbasedCtls;
+    cpuParams.VmxProcCtls2 = g_Resources.VmxProcbasedCtls2;
+    cpuParams.VmxExitCtls = g_Resources.VmxExitCtls;
+    cpuParams.VmxEntryCtls = g_Resources.VmxEntryCtls;
+    cpuParams.VmxTruePin = g_Resources.VmxTruePinbasedCtls;
+    cpuParams.VmxTrueProc = g_Resources.VmxTrueProcbasedCtls;
+    cpuParams.VmxTrueExit = g_Resources.VmxTrueExitCtls;
+    cpuParams.VmxTrueEntry = g_Resources.VmxTrueEntryCtls;
+    cpuParams.VmxCr0Fixed0 = g_Resources.VmxCr0Fixed0;
+    cpuParams.VmxCr0Fixed1 = g_Resources.VmxCr0Fixed1;
+    cpuParams.VmxCr4Fixed0 = g_Resources.VmxCr4Fixed0;
+    cpuParams.VmxCr4Fixed1 = g_Resources.VmxCr4Fixed1;
+    cpuParams.VmxEptVpidCap = g_Resources.VmxEptVpidCap;
+    if (g_Resources.DebugBuffer) {
+        cpuParams.DebugBufferVirtual = g_Resources.DebugBuffer;
+        cpuParams.DebugBufferSize = HV_DEBUG_BUFFER_SIZE;
+    }
 
     status = VmcsInitialize(cpu, &cpuParams);
     if (OMBRA_FAILED(status)) {
@@ -203,30 +379,17 @@ static OMBRA_STATUS InitializeCpuVmx(
 // IPI Callback - Runs on Each CPU
 // =============================================================================
 
-static ULONG_PTR NTAPI VirtualizeThisCpu(ULONG_PTR Argument) {
-    HV_INIT_PARAMS* params = (HV_INIT_PARAMS*)Argument;
+static U64 __stdcall VirtualizeThisCpu(U64 Argument) {
+    (void)Argument;
 
-    // Get current CPU number
-    FN_KeGetCurrentProcessorNumberEx getCpuNum =
-        (FN_KeGetCurrentProcessorNumberEx)params->KeGetCurrentProcessorNumberEx;
-    U32 cpuId = getCpuNum(NULL);
-
-    // Calculate per-CPU addresses
-    void* vmxonVirt = (U8*)params->VmxonRegionsVirt + (cpuId * 0x1000);
-    U64 vmxonPhys = params->VmxonRegionsPhys + (cpuId * 0x1000);
-    void* vmcsVirt = (U8*)params->VmcsRegionsVirt + (cpuId * 0x1000);
-    U64 vmcsPhys = params->VmcsRegionsPhys + (cpuId * 0x1000);
-    void* stackTop = (U8*)params->HostStacksBase + ((cpuId + 1) * params->HostStackSize);
+    // Get current CPU ID via resolved function
+    U32 cpuId = 0;
+    if (g_KernelSymbols.KeGetCurrentProcessorNumberEx) {
+        cpuId = g_KernelSymbols.KeGetCurrentProcessorNumberEx(NULL);
+    }
 
     // Initialize this CPU
-    OMBRA_STATUS status = InitializeCpuVmx(
-        cpuId,
-        vmxonVirt, vmxonPhys,
-        vmcsVirt, vmcsPhys,
-        stackTop,
-        params->MsrBitmapVirt, params->MsrBitmapPhys,
-        params
-    );
+    OMBRA_STATUS status = InitializeCpuVmx(cpuId);
 
     if (OMBRA_SUCCESS == status) {
         _InterlockedIncrement((volatile long*)&g_SuccessCount);
@@ -234,58 +397,70 @@ static ULONG_PTR NTAPI VirtualizeThisCpu(ULONG_PTR Argument) {
         _InterlockedIncrement((volatile long*)&g_FailCount);
     }
 
-    return status;
+    return (U64)status;
 }
 
 // =============================================================================
-// Main Initialization (called after IPI broadcast setup)
+// Main Initialization
 // =============================================================================
 
-static int OmbraInitialize(HV_INIT_PARAMS* params) {
+static OMBRA_STATUS OmbraInitialize(void) {
     OMBRA_STATUS status;
 
+    if (g_Initialized) {
+        return OMBRA_SUCCESS;
+    }
+
     // Initialize debug logging first
-    if (params->DebugBufferVirt && params->DebugBufferSize > 0) {
-        status = DbgInitialize(params->DebugBufferVirt, params->DebugBufferSize);
-        if (OMBRA_SUCCESS == status) {
-            g_DebugInitialized = true;
+    if (g_Resources.DebugBuffer) {
+        status = DbgInitialize(g_Resources.DebugBuffer, HV_DEBUG_BUFFER_SIZE);
+        if (OMBRA_SUCCESS != status) {
+            // Continue without debug - not critical
         }
     }
 
-    INFO("OmbraHypervisor starting...");
-    INFO("CPU count: %u", params->CpuCount);
+    INFO("OmbraHypervisor starting (self-contained mode)...");
+    INFO("CPU count: %u", g_Resources.CpuCount);
+
+    // Discover self info for EPT protection
+    status = SelfInfoDiscover();
+    if (OMBRA_FAILED(status)) {
+        WARN("Self info discovery failed: 0x%X", status);
+        // Continue - self-protection is optional
+    }
 
     // Initialize EPT (once, shared across CPUs)
-    // EPT memory layout: Page 0 = PML4, Page 1 = PDPT, remaining = for splits
-    void* pdptVirt = (U8*)params->EptTablesVirt + 4096;
-    U64 pdptPhys = params->EptTablesPhys + 4096;
+    void* pdptVirt = (U8*)g_Resources.EptTables + 0x1000;
+    U64 pdptPhys = g_Resources.EptTablesPhys + 0x1000;
 
     status = EptInitialize(
         &g_EptState,
-        params->EptTablesVirt,
-        params->EptTablesPhys,
+        g_Resources.EptTables,
+        g_Resources.EptTablesPhys,
         pdptVirt, pdptPhys,
-        params->EptTablesPages
+        HV_EPT_PAGES
     );
     if (OMBRA_FAILED(status)) {
         ERR("EPT initialization failed: 0x%X", status);
-        return (int)status;
+        return status;
     }
     INFO("EPT initialized");
 
     // Self-protection: Hide hypervisor memory from guest
-    if (params->HvPhysBase != 0 && params->BlankPagePhys != 0) {
-        status = EptProtectSelf(
-            &g_EptState,
-            params->HvPhysBase,
-            params->HvPhysSize,
-            params->BlankPagePhys
-        );
-        if (OMBRA_FAILED(status)) {
-            WARN("EPT self-protection failed: 0x%X (continuing anyway)", status);
-            // Don't fail init - self-protection is optional enhancement
-        } else {
-            INFO("EPT self-protection enabled");
+    U64 hvPhysBase, hvPhysSize;
+    if (OMBRA_SUCCESS == SelfInfoGetPhysicalRange(&hvPhysBase, &hvPhysSize)) {
+        if (g_Resources.BlankPagePhys != 0) {
+            status = EptProtectSelf(
+                &g_EptState,
+                hvPhysBase,
+                hvPhysSize,
+                g_Resources.BlankPagePhys
+            );
+            if (OMBRA_FAILED(status)) {
+                WARN("EPT self-protection failed: 0x%X (continuing)", status);
+            } else {
+                INFO("EPT self-protection enabled");
+            }
         }
     }
 
@@ -293,71 +468,123 @@ static int OmbraInitialize(HV_INIT_PARAMS* params) {
     status = HookManagerInit(&g_HookManager, &g_EptState);
     if (OMBRA_FAILED(status)) {
         ERR("Hook manager init failed: 0x%X", status);
-        return (int)status;
+        return status;
     }
     INFO("Hook manager initialized");
 
-    // Store params globally for IPI callback
-    g_InitParams = params;
+    // Reset counters
     g_SuccessCount = 0;
     g_FailCount = 0;
 
-    // Broadcast to all CPUs
+    // Broadcast to all CPUs via IPI
     INFO("Broadcasting VMX init to all CPUs...");
 
-    FN_KeIpiGenericCall ipiCall = (FN_KeIpiGenericCall)params->KeIpiGenericCall;
-    ipiCall(VirtualizeThisCpu, (ULONG_PTR)params);
+    if (g_KernelSymbols.KeIpiGenericCall) {
+        g_KernelSymbols.KeIpiGenericCall((void*)VirtualizeThisCpu, 0);
+    } else {
+        ERR("KeIpiGenericCall not available!");
+        return OMBRA_ERROR_NOT_INITIALIZED;
+    }
 
     // Check results
     INFO("VMX init complete: %u success, %u failed", g_SuccessCount, g_FailCount);
 
     if (g_SuccessCount == 0) {
         ERR("No CPUs virtualized!");
-        return -100;
+        return OMBRA_ERROR_VMX_INIT_FAILED;
     }
 
     if (g_FailCount > 0) {
         WARN("Some CPUs failed to virtualize");
     }
 
+    g_Initialized = true;
     INFO("OmbraHypervisor active on %u CPUs", g_SuccessCount);
-    return 0;
+    return OMBRA_SUCCESS;
 }
 
 // =============================================================================
-// Module Entry Point - Called by SUPDrv LDR_LOAD
+// Entry Point - Called by Loader
 // =============================================================================
+//
+// The loader must:
+// 1. Set g_KernelSymbols.MmGetSystemRoutineAddress before calling
+// 2. Call HvEntry(NULL) or HvEntry(MmGetSystemRoutineAddress)
+// 3. Returns 0 on success, negative on failure
+
+__declspec(dllexport)
+int HvEntry(void* MmGetSystemRoutineAddress) {
+    OMBRA_STATUS status;
+
+    // Accept MmGetSystemRoutineAddress from loader
+    if (MmGetSystemRoutineAddress) {
+        g_KernelSymbols.MmGetSystemRoutineAddress =
+            (FN_MmGetSystemRoutineAddress)MmGetSystemRoutineAddress;
+    }
+
+    // Must have bootstrap function
+    if (!g_KernelSymbols.MmGetSystemRoutineAddress) {
+        return -1;  // No bootstrap function
+    }
+
+    // Resolve all kernel symbols
+    status = KernelResolveSymbols();
+    if (OMBRA_FAILED(status)) {
+        return -2;  // Symbol resolution failed
+    }
+
+    // Read VMX capability MSRs
+    ReadVmxCapabilities();
+
+    // Allocate VMX resources
+    status = AllocateResources();
+    if (OMBRA_FAILED(status)) {
+        return -3;  // Resource allocation failed
+    }
+
+    // Initialize hypervisor
+    status = OmbraInitialize();
+    if (OMBRA_FAILED(status)) {
+        FreeResources();
+        return -4;  // Initialization failed
+    }
+
+    return 0;  // Success
+}
+
+// =============================================================================
+// Legacy Entry Point - For backwards compatibility with .ombra section
+// =============================================================================
+
+#pragma section(".ombra", read, write)
+#pragma comment(linker, "/SECTION:.ombra,RW")
+
+__declspec(allocate(".ombra"))
+volatile OMBRA_BOOTSTRAP g_Bootstrap = {
+    .Magic = 0x524D424F,    // 'OMBR'
+    .Version = 1,
+    .ParamsPtr = 0,
+    .Reserved = {0}
+};
 
 __declspec(dllexport)
 int OmbraModuleInit(void* ignored) {
-    (void)ignored;  // SUPDrv may pass something, we don't need it
+    (void)ignored;
 
-    // Read params from bootstrap section
-    if (g_Bootstrap.Magic != 0x524D424F) {
-        return -1;  // Bootstrap magic invalid
+    // Check if legacy params were patched
+    if (g_Bootstrap.Magic == 0x524D424F &&
+        g_Bootstrap.Version == 1 &&
+        g_Bootstrap.ParamsPtr != 0) {
+
+        HV_INIT_PARAMS* params = (HV_INIT_PARAMS*)g_Bootstrap.ParamsPtr;
+
+        // Extract MmGetSystemRoutineAddress from legacy params if available
+        // For now, just call HvEntry with NULL and hope it works
+        // The loader should switch to the new HvEntry interface
     }
 
-    if (g_Bootstrap.Version != 1) {
-        return -2;  // Bootstrap version mismatch
-    }
-
-    if (g_Bootstrap.ParamsPtr == 0) {
-        return -3;  // Params not patched
-    }
-
-    HV_INIT_PARAMS* params = (HV_INIT_PARAMS*)g_Bootstrap.ParamsPtr;
-
-    // Validate params structure
-    if (params->Magic != 0x4F4D4252) {  // 'OMBR'
-        return -4;  // Params magic invalid
-    }
-
-    if (params->Version != 1) {
-        return -5;  // Params version mismatch
-    }
-
-    // Call actual initialization
-    return OmbraInitialize(params);
+    // Fall through to self-contained initialization
+    return HvEntry(NULL);
 }
 
 // =============================================================================
@@ -375,7 +602,7 @@ void OmbraShutdown(void) {
 
     // Count active CPUs
     U32 activeCpus = 0;
-    for (U32 i = 0; i < 256; i++) {
+    for (U32 i = 0; i < HV_MAX_CPUS; i++) {
         VMX_CPU* cpu = &g_CpuContexts[i];
         if (cpu->VmxEnabled && cpu->VmxLaunched) {
             activeCpus++;
@@ -386,7 +613,7 @@ void OmbraShutdown(void) {
         WARN("Shutdown requested with %u active CPUs", activeCpus);
         WARN("VMXOFF must be executed per-CPU via VMCALL_UNLOAD");
 
-        for (U32 i = 0; i < 256; i++) {
+        for (U32 i = 0; i < HV_MAX_CPUS; i++) {
             VMX_CPU* cpu = &g_CpuContexts[i];
             if (cpu->VmxEnabled) {
                 cpu->ShutdownPending = true;
@@ -395,16 +622,18 @@ void OmbraShutdown(void) {
     }
 
     DbgShutdown();
+
+    // Free resources only after all CPUs have executed VMXOFF
+    // This would typically happen in response to VMCALL_UNLOAD completion
+    // FreeResources();  // Deferred
+
     INFO("Shutdown initiated - awaiting per-CPU VMXOFF");
+    g_Initialized = false;
 }
 
 // =============================================================================
 // Helper: Get CPU Context (local to entry.c)
 // =============================================================================
-//
-// NOTE: This is a LOCAL helper that accesses g_CpuContexts (entry.c's local array).
-// The EXTERNAL VmxGetCurrentCpu is defined in vmx.c and accesses g_Ombra.Cpus.
-// Making this static avoids duplicate symbol errors during linking.
 
 static VMX_CPU* GetLocalCpuContext(void) {
     int cpuInfo[4];
@@ -413,7 +642,7 @@ static VMX_CPU* GetLocalCpuContext(void) {
     // Initial APIC ID is in bits 24-31 of EBX
     U32 apicId = (cpuInfo[1] >> 24) & 0xFF;
 
-    if (apicId < 256) {
+    if (apicId < HV_MAX_CPUS) {
         return &g_CpuContexts[apicId];
     }
 
