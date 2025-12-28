@@ -37,10 +37,18 @@ set(GUI_SOURCES
 )
 
 # Loader source files from parent directory
+# NOTE: loader_api.c and payload_loader.c removed - legacy code using broken structures
+# TODO: GUI needs migration to use hv_loader.c API instead
 set(LOADER_SOURCES
-    ../loader_api.c
-    ../payload_loader.c
     ../driver_interface.c
+    ../loader/hv_loader.c
+    ../loader/pe_parser.c
+    ../loader/pe_mapper.c
+    ../loader/pe_relocs.c
+    ../loader/pe_iat.c
+    ../loader/pe_imports.c
+    ../loader/pe_utils.c
+    ../loader/pe_wipe.c
     ../byovd/deployer.c
     ../byovd/supdrv.c
     ../byovd/throttlestop.c
@@ -63,6 +71,8 @@ target_include_directories(OmbraGUI PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src
     ${CMAKE_CURRENT_SOURCE_DIR}/../
     ${CMAKE_CURRENT_SOURCE_DIR}/../byovd
+    ${CMAKE_CURRENT_SOURCE_DIR}/../loader
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../shared
     ${IMGUI_DIR}
     ${IMGUI_DIR}/backends
 )

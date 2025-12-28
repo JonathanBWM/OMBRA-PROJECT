@@ -65,8 +65,10 @@ REM ============================================================================
 echo [1/3] Building usermode loader...
 cd /d "%PROJECT_ROOT%\usermode"
 
+REM NOTE: payload_loader.c and loader_api.c removed - legacy code using broken structures
+REM       main.c now uses hv_loader.c which uses correct supdrv.c implementation
 cl.exe /nologo /O2 /W4 /WX- /Fe:loader.exe ^
-    main.c driver_interface.c payload_loader.c loader_api.c ^
+    main.c driver_interface.c ^
     loader\hv_loader.c loader\pe_parser.c loader\pe_mapper.c ^
     loader\pe_relocs.c loader\pe_iat.c loader\pe_imports.c ^
     loader\pe_utils.c loader\pe_wipe.c loader\drv_loader.c ^
