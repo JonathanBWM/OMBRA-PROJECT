@@ -67,8 +67,12 @@ static BOOL PatchOmbraSection(void* image, U32 imageSize, PE_INFO* peInfo, U64 m
         printf("[!] .ombra section not found in hypervisor\n");
         return FALSE;
     }
+    printf("[DEBUG] ombraSection OK, checking VirtualSize...\n");
+    fflush(stdout);
 
     // Validate section size
+    printf("[DEBUG] About to access ombraSection->VirtualSize at %p\n", (void*)&ombraSection->VirtualSize);
+    fflush(stdout);
     if (ombraSection->VirtualSize < sizeof(LOADER_OMBRA_BOOTSTRAP)) {
         printf("[!] .ombra section too small: %u bytes\n", ombraSection->VirtualSize);
         return FALSE;
