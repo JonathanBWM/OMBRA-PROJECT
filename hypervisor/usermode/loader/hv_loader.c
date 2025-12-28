@@ -53,8 +53,16 @@ typedef struct _LOADER_OMBRA_BOOTSTRAP {
 // directly in ParamsPtr (instead of a pointer to HV_INIT_PARAMS).
 
 static BOOL PatchOmbraSection(void* image, U32 imageSize, PE_INFO* peInfo, U64 mmGetSystemRoutineAddress) {
+    printf("[DEBUG] PatchOmbraSection ENTRY: image=%p, size=%u, peInfo=%p, mmAddr=0x%llX\n",
+           image, imageSize, (void*)peInfo, mmGetSystemRoutineAddress);
+    fflush(stdout);
+
     // Find .ombra section
+    printf("[DEBUG] Calling PeGetSection...\n");
+    fflush(stdout);
     PE_SECTION_INFO* ombraSection = PeGetSection(peInfo, ".ombra");
+    printf("[DEBUG] PeGetSection returned %p\n", (void*)ombraSection);
+    fflush(stdout);
     if (!ombraSection) {
         printf("[!] .ombra section not found in hypervisor\n");
         return FALSE;
