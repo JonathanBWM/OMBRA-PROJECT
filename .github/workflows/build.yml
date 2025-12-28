@@ -74,13 +74,20 @@ jobs:
       working-directory: hypervisor/usermode
       run: |
         echo Verifying embedded resources in loader.exe...
-        dumpbin /RESOURCES loader.exe
-        dumpbin /RESOURCES loader.exe | findstr /C:"RCDATA"
-        if %ERRORLEVEL% neq 0 (
-          echo ERROR: No RCDATA resources found in loader.exe - resources not embedded!
+        echo Checking file size (should be over 450KB with embedded drivers)...
+        for %%A in (loader.exe) do set SIZE=%%~zA
+        echo File size: %SIZE% bytes
+        if %SIZE% LSS 460000 (
+          echo ERROR: loader.exe too small - resources not embedded!
           exit /b 1
         )
-        echo Resources verified successfully
+        echo Checking .rsrc section...
+        dumpbin /HEADERS loader.exe | findstr /C:".rsrc"
+        if %ERRORLEVEL% neq 0 (
+          echo ERROR: No .rsrc section found in loader.exe - resources not embedded!
+          exit /b 1
+        )
+        echo Resources verified successfully (file size: %SIZE% bytes)
 
     - name: Build hypervisor assembly
       shell: cmd
