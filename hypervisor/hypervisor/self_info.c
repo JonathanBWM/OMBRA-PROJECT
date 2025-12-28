@@ -55,7 +55,7 @@ OMBRA_STATUS SelfInfoDiscover(void) {
 
     // Validate DOS header
     if (dosHeader->e_magic != IMAGE_DOS_SIGNATURE) {
-        return OMBRA_ERROR_INVALID_PARAMETER;
+        return OMBRA_ERROR_INVALID_PARAM;
     }
 
     // Get NT headers
@@ -63,13 +63,13 @@ OMBRA_STATUS SelfInfoDiscover(void) {
 
     // Validate NT signature
     if (ntHeaders->Signature != IMAGE_NT_SIGNATURE) {
-        return OMBRA_ERROR_INVALID_PARAMETER;
+        return OMBRA_ERROR_INVALID_PARAM;
     }
 
     // Validate PE64
     optHeader = &ntHeaders->OptionalHeader;
     if (optHeader->Magic != IMAGE_NT_OPTIONAL_HDR64_MAGIC) {
-        return OMBRA_ERROR_INVALID_PARAMETER;
+        return OMBRA_ERROR_INVALID_PARAM;
     }
 
     // Extract info
@@ -154,7 +154,7 @@ IMAGE_SECTION_HEADER* SelfInfoFindSection(const char* name) {
 
 OMBRA_STATUS SelfInfoGetPhysicalRange(U64* outPhysBase, U64* outPhysSize) {
     if (!outPhysBase || !outPhysSize) {
-        return OMBRA_ERROR_INVALID_PARAMETER;
+        return OMBRA_ERROR_INVALID_PARAM;
     }
 
     if (!g_SelfInfo.Valid) {
@@ -167,7 +167,7 @@ OMBRA_STATUS SelfInfoGetPhysicalRange(U64* outPhysBase, U64* outPhysSize) {
     // Get physical base (requires kernel symbols)
     U64 physBase = SelfInfoGetPhysicalBase();
     if (physBase == 0) {
-        return OMBRA_ERROR_NOT_INITIALIZED;
+        return OMBRA_ERROR_INVALID_STATE;
     }
 
     *outPhysBase = physBase;

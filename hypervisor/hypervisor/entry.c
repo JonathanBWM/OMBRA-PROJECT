@@ -98,10 +98,10 @@ static void ReadVmxCapabilities(void) {
 
     // Read true controls if supported (bit 55 of VMX_BASIC)
     if (g_Resources.VmxBasic & (1ULL << 55)) {
-        g_Resources.VmxTruePinbasedCtls = __readmsr(MSR_IA32_VMX_TRUE_PINBASED_CTLS);
-        g_Resources.VmxTrueProcbasedCtls = __readmsr(MSR_IA32_VMX_TRUE_PROCBASED_CTLS);
-        g_Resources.VmxTrueExitCtls = __readmsr(MSR_IA32_VMX_TRUE_EXIT_CTLS);
-        g_Resources.VmxTrueEntryCtls = __readmsr(MSR_IA32_VMX_TRUE_ENTRY_CTLS);
+        g_Resources.VmxTruePinbasedCtls = __readmsr(MSR_IA32_VMX_TRUE_PINBASED);
+        g_Resources.VmxTrueProcbasedCtls = __readmsr(MSR_IA32_VMX_TRUE_PROCBASED);
+        g_Resources.VmxTrueExitCtls = __readmsr(MSR_IA32_VMX_TRUE_EXIT);
+        g_Resources.VmxTrueEntryCtls = __readmsr(MSR_IA32_VMX_TRUE_ENTRY);
     } else {
         g_Resources.VmxTruePinbasedCtls = g_Resources.VmxPinbasedCtls;
         g_Resources.VmxTrueProcbasedCtls = g_Resources.VmxProcbasedCtls;
@@ -152,7 +152,7 @@ static OMBRA_STATUS AllocateResources(void) {
     // Get CPU count
     cpuCount = KernelGetProcessorCount();
     if (cpuCount == 0 || cpuCount > HV_MAX_CPUS) {
-        return OMBRA_ERROR_INVALID_PARAMETER;
+        return OMBRA_ERROR_INVALID_PARAM;
     }
     g_Resources.CpuCount = cpuCount;
 
@@ -165,7 +165,7 @@ static OMBRA_STATUS AllocateResources(void) {
     // Allocate VMXON regions (contiguous, 4KB aligned)
     g_Resources.VmxonRegions = KernelAllocateContiguous(vmxonSize);
     if (!g_Resources.VmxonRegions) {
-        return OMBRA_ERROR_MEMORY_ALLOCATION;
+        return OMBRA_ERROR_NO_MEMORY;
     }
     ZeroMem(g_Resources.VmxonRegions, vmxonSize);
     g_Resources.VmxonRegionsPhys = KernelGetPhysicalAddress(g_Resources.VmxonRegions);
@@ -173,7 +173,7 @@ static OMBRA_STATUS AllocateResources(void) {
     // Allocate VMCS regions (contiguous, 4KB aligned)
     g_Resources.VmcsRegions = KernelAllocateContiguous(vmcsSize);
     if (!g_Resources.VmcsRegions) {
-        return OMBRA_ERROR_MEMORY_ALLOCATION;
+        return OMBRA_ERROR_NO_MEMORY;
     }
     ZeroMem(g_Resources.VmcsRegions, vmcsSize);
     g_Resources.VmcsRegionsPhys = KernelGetPhysicalAddress(g_Resources.VmcsRegions);
@@ -181,14 +181,14 @@ static OMBRA_STATUS AllocateResources(void) {
     // Allocate host stacks (contiguous for simplicity)
     g_Resources.HostStacks = KernelAllocateContiguous(stackSize);
     if (!g_Resources.HostStacks) {
-        return OMBRA_ERROR_MEMORY_ALLOCATION;
+        return OMBRA_ERROR_NO_MEMORY;
     }
     ZeroMem(g_Resources.HostStacks, stackSize);
 
     // Allocate MSR bitmap (shared, 4KB)
     g_Resources.MsrBitmap = KernelAllocateContiguous(0x1000);
     if (!g_Resources.MsrBitmap) {
-        return OMBRA_ERROR_MEMORY_ALLOCATION;
+        return OMBRA_ERROR_NO_MEMORY;
     }
     ZeroMem(g_Resources.MsrBitmap, 0x1000);
     g_Resources.MsrBitmapPhys = KernelGetPhysicalAddress(g_Resources.MsrBitmap);
@@ -196,7 +196,7 @@ static OMBRA_STATUS AllocateResources(void) {
     // Allocate EPT tables (contiguous)
     g_Resources.EptTables = KernelAllocateContiguous(eptSize);
     if (!g_Resources.EptTables) {
-        return OMBRA_ERROR_MEMORY_ALLOCATION;
+        return OMBRA_ERROR_NO_MEMORY;
     }
     ZeroMem(g_Resources.EptTables, eptSize);
     g_Resources.EptTablesPhys = KernelGetPhysicalAddress(g_Resources.EptTables);
@@ -483,7 +483,7 @@ static OMBRA_STATUS OmbraInitialize(void) {
         g_KernelSymbols.KeIpiGenericCall((void*)VirtualizeThisCpu, 0);
     } else {
         ERR("KeIpiGenericCall not available!");
-        return OMBRA_ERROR_NOT_INITIALIZED;
+        return OMBRA_ERROR_INVALID_STATE;
     }
 
     // Check results
@@ -491,7 +491,7 @@ static OMBRA_STATUS OmbraInitialize(void) {
 
     if (g_SuccessCount == 0) {
         ERR("No CPUs virtualized!");
-        return OMBRA_ERROR_VMX_INIT_FAILED;
+        return OMBRA_ERROR_VMXON_FAILED;
     }
 
     if (g_FailCount > 0) {

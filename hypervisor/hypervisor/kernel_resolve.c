@@ -251,12 +251,12 @@ NTSTATUS KernelExecuteOnEachProcessor(NTSTATUS(*callback)(PVOID), PVOID context)
 
     // Check results
     if (ipiCtx.SuccessCount == 0) {
-        return STATUS_UNSUCCESSFUL;
+        return (NTSTATUS)0xC0000001L;  // STATUS_UNSUCCESSFUL
     }
 
     if (ipiCtx.FailCount > 0) {
         // Partial success - some CPUs failed
-        return STATUS_PARTIAL_COPY;
+        return (NTSTATUS)0x8000000DL;  // STATUS_PARTIAL_COPY
     }
 
     return STATUS_SUCCESS;
