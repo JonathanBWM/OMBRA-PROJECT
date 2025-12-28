@@ -81,7 +81,8 @@ jobs:
         cl.exe /nologo /c /O2 /W4 /WX- /GS- /I..\shared /Foobj\ ^
           crt.c entry.c vmx.c vmcs.c ept.c exit_dispatch.c timing.c ^
           hooks.c debug.c nested.c spoof.c ^
-          kernel_resolve.c self_info.c phys_pool.c va_finder.c
+          kernel_resolve.c self_info.c phys_pool.c va_finder.c ^
+          mdl_alloc.c relocation.c
         if %ERRORLEVEL% neq 0 exit /b 1
         echo Core modules built
 
