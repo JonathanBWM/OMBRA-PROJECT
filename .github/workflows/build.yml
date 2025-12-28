@@ -96,27 +96,33 @@ jobs:
         echo Library created successfully
         dir *.lib
 
-    - name: Link hypervisor driver
+    - name: Link hypervisor payload
       shell: cmd
       working-directory: hypervisor/hypervisor
       run: |
-        echo Linking ombra_hv.sys...
+        echo Linking hypervisor payload (position-independent blob)...
         echo.
-        echo NOTE: Hypervisor uses late-bound imports via params struct
-        echo       No kernel libs needed - all APIs resolved at runtime by loader
-        echo       Output name differs from .lib to avoid LNK1149
+        echo This is NOT a Windows kernel driver.
+        echo It is a manually-mapped payload that resolves all kernel
+        echo APIs at runtime via the params struct passed by the loader.
+        echo.
+        echo Required PE structure:
+        echo   - Valid PE headers (for loader parsing)
+        echo   - .ombra section (for bootstrap struct)
+        echo   - Entry point RVA (OmbraModuleInit)
+        echo   - NO import table
         echo.
 
-        link.exe /nologo /DRIVER /ENTRY:OmbraModuleInit /SUBSYSTEM:NATIVE ^
-          /NODEFAULTLIB /FORCE:MULTIPLE /OUT:ombra_hv.sys ^
+        link.exe /nologo /NODEFAULTLIB /FORCE:MULTIPLE ^
+          /ENTRY:OmbraModuleInit /OUT:ombra_payload.sys ^
           hypervisor.lib
         if %ERRORLEVEL% neq 0 exit /b 1
 
         echo Renaming to hypervisor.sys...
-        move ombra_hv.sys hypervisor.sys
+        move ombra_payload.sys hypervisor.sys
         if %ERRORLEVEL% neq 0 exit /b 1
 
-        echo Hypervisor driver linked successfully
+        echo Hypervisor payload linked successfully
         dir *.sys
 
     - name: Verify hypervisor.sys PE structure
