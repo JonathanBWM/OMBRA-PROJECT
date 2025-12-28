@@ -306,13 +306,12 @@ void HookHandleMtf(HOOK_MANAGER* mgr, U64 guestRip);
 SHADOW_HOOK* HookFindShadowByGpa(HOOK_MANAGER* mgr, U64 gpa);
 
 // =============================================================================
-// EPT Page Splitting
+// NOTE: EPT Page Splitting
 // =============================================================================
-
-// Split a 1GB page into 512 x 2MB pages
-OMBRA_STATUS EptSplit1GbTo2Mb(struct _EPT_STATE* ept, U64 guestPhysical);
-
-// Split a 2MB page into 512 x 4KB pages
-OMBRA_STATUS EptSplit2MbTo4Kb(struct _EPT_STATE* ept, U64 guestPhysical);
+//
+// EptSplit1GbTo2Mb() and EptSplit2MbTo4Kb() are declared in ept.h
+// (not here) to maintain a single source of truth. Include ept.h to use them.
+//
+// =============================================================================
 
 #endif // OMBRA_HOOKS_H

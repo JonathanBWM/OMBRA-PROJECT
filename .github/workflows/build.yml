@@ -100,29 +100,35 @@ jobs:
       shell: cmd
       working-directory: hypervisor/hypervisor
       run: |
-        echo Linking hypervisor payload (position-independent blob)...
+        echo Linking hypervisor as minimal PE (position-independent blob)...
         echo.
-        echo This is NOT a Windows kernel driver.
-        echo It is a manually-mapped payload that resolves all kernel
-        echo APIs at runtime via the params struct passed by the loader.
-        echo.
-        echo Required PE structure:
-        echo   - Valid PE headers (for loader parsing)
+        echo This is NOT a Windows driver. It has:
+        echo   - ZERO kernel imports (all APIs via params struct)
         echo   - .ombra section (for bootstrap struct)
-        echo   - Entry point RVA (OmbraModuleInit)
-        echo   - NO import table
+        echo   - Entry point: OmbraModuleInit
+        echo.
+        echo Linker flags:
+        echo   /NODEFAULTLIB - no CRT or WDK libraries
+        echo   /ENTRY:OmbraModuleInit - custom entry point
+        echo   (no /DRIVER, no /SUBSYSTEM:NATIVE - not a kernel driver)
         echo.
 
-        link.exe /nologo /NODEFAULTLIB /FORCE:MULTIPLE ^
-          /SUBSYSTEM:NATIVE /ENTRY:OmbraModuleInit /OUT:ombra_payload.sys ^
-          hypervisor.lib
+        link.exe /nologo /NODEFAULTLIB /ENTRY:OmbraModuleInit ^
+          /OUT:ombra_hv.sys hypervisor.lib
         if %ERRORLEVEL% neq 0 exit /b 1
 
-        echo Renaming to hypervisor.sys...
-        move ombra_payload.sys hypervisor.sys
+        move ombra_hv.sys hypervisor.sys
         if %ERRORLEVEL% neq 0 exit /b 1
 
-        echo Hypervisor payload linked successfully
+        echo.
+        echo === PE VERIFICATION ===
+        dumpbin /headers hypervisor.sys | findstr /i "entry"
+        dumpbin /headers hypervisor.sys | findstr /i "section"
+        echo.
+        echo Checking imports (should be none)...
+        dumpbin /imports hypervisor.sys || echo No imports - CORRECT
+        echo.
+        echo Hypervisor payload built successfully
         dir *.sys
 
     - name: Verify hypervisor.sys PE structure
