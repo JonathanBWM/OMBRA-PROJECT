@@ -178,3 +178,69 @@ UINT64 NtGetDriverBase(const wchar_t* wszDriverName) {
     HeapFree(GetProcessHeap(), 0, pBuffer);
     return result;
 }
+
+//=============================================================================
+// Resolve Kernel Export (from usermode)
+//=============================================================================
+//
+// Approach:
+// 1. Get kernel module base from NtQuerySystemInformation
+// 2. Load module into usermode with DONT_RESOLVE_DLL_REFERENCES
+// 3. Parse export directory to get function RVA
+// 4. Return kernel_base + RVA
+//
+// This allows resolving kernel symbols without SUP_IOCTL_LDR_GET_SYMBOL.
+
+UINT64 NtGetKernelExport(const char* szFunctionName) {
+    if (!g_NtInitialized && !NtInit()) {
+        DbgLog("NtGetKernelExport: NtInit failed");
+        return 0;
+    }
+
+    DbgLog("NtGetKernelExport: Resolving '%s'", szFunctionName);
+
+    // Get ntoskrnl kernel base
+    UINT64 kernelBase = NtGetDriverBase(L"ntoskrnl");
+    if (kernelBase == 0) {
+        DbgLog("NtGetKernelExport: Failed to get ntoskrnl base");
+        return 0;
+    }
+
+    DbgLog("NtGetKernelExport: ntoskrnl base = 0x%016llX", kernelBase);
+
+    // Load ntoskrnl into usermode without resolving imports
+    // This gives us a usermode copy to parse the export table
+    HMODULE hKernel = LoadLibraryExW(
+        L"ntoskrnl.exe",
+        NULL,
+        DONT_RESOLVE_DLL_REFERENCES
+    );
+
+    if (!hKernel) {
+        DbgLog("NtGetKernelExport: LoadLibraryExW failed: %lu", GetLastError());
+        return 0;
+    }
+
+    // Get usermode export address
+    FARPROC pUserExport = GetProcAddress(hKernel, szFunctionName);
+    if (!pUserExport) {
+        DbgLog("NtGetKernelExport: GetProcAddress('%s') failed: %lu",
+               szFunctionName, GetLastError());
+        FreeLibrary(hKernel);
+        return 0;
+    }
+
+    // Calculate RVA: usermode_addr - usermode_base
+    UINT64 userBase = (UINT64)hKernel;
+    UINT64 userAddr = (UINT64)pUserExport;
+    UINT64 rva = userAddr - userBase;
+
+    // Calculate kernel address: kernel_base + RVA
+    UINT64 kernelAddr = kernelBase + rva;
+
+    DbgLog("NtGetKernelExport: %s = 0x%016llX (RVA=0x%llX)",
+           szFunctionName, kernelAddr, rva);
+
+    FreeLibrary(hKernel);
+    return kernelAddr;
+}

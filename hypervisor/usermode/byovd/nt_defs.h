@@ -190,4 +190,7 @@ UINT64 NtGetDriverBase(const wchar_t* wszDriverName);
 // Open device using NtCreateFile (required for drivers without DOS symlink)
 HANDLE NtOpenDevice(const wchar_t* wszNtDevicePath);
 
+// Resolve kernel export from usermode (loads ntoskrnl.exe, parses exports)
+UINT64 NtGetKernelExport(const char* szFunctionName);
+
 #endif // BYOVD_NT_DEFS_H
