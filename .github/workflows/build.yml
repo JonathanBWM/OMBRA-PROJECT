@@ -43,51 +43,12 @@ jobs:
         where cl.exe
         cl.exe 2>&1 | findstr /C:"Version"
         where lib.exe
+        where link.exe
         echo "Toolchain verified"
 
-    - name: Build usermode loader
-      shell: cmd
-      working-directory: hypervisor/usermode
-      run: |
-        echo Compiling resources...
-        rc.exe /fo resources\loader.res resources\loader.rc
-        if %ERRORLEVEL% neq 0 exit /b 1
-        echo Resources compiled successfully
-
-        echo Building usermode loader with embedded resources...
-        cl.exe /O2 /W4 /WX- /Fe:loader.exe ^
-          main.c driver_interface.c payload_loader.c loader_api.c debug_reader.c ^
-          loader/hv_loader.c loader/pe_parser.c loader/pe_mapper.c ^
-          loader/pe_relocs.c loader/pe_iat.c loader/pe_imports.c ^
-          loader/pe_utils.c loader/pe_wipe.c loader/drv_loader.c loader/cleanup.c ^
-          resources/resource_extract.c ^
-          byovd/supdrv.c byovd/deployer.c byovd/crypto.c byovd/nt_helpers.c byovd/throttlestop.c ^
-          tests/detection_baseline.c ^
-          /I../shared /I. /Iresources ^
-          /link kernel32.lib advapi32.lib resources\loader.res
-        if %ERRORLEVEL% neq 0 exit /b 1
-        echo Usermode loader built successfully
-        dir *.exe
-
-    - name: Verify embedded resources
-      shell: cmd
-      working-directory: hypervisor/usermode
-      run: |
-        echo Verifying embedded resources in loader.exe...
-        echo Checking file size (should be over 450KB with embedded drivers)...
-        for %%A in (loader.exe) do set SIZE=%%~zA
-        echo File size: %SIZE% bytes
-        if %SIZE% LSS 460000 (
-          echo ERROR: loader.exe too small - resources not embedded!
-          exit /b 1
-        )
-        echo Checking .rsrc section...
-        dumpbin /HEADERS loader.exe | findstr /C:".rsrc"
-        if %ERRORLEVEL% neq 0 (
-          echo ERROR: No .rsrc section found in loader.exe - resources not embedded!
-          exit /b 1
-        )
-        echo Resources verified successfully (file size: %SIZE% bytes)
+    # ============================================================
+    # STEP 1: Build hypervisor.sys FIRST (loader embeds this)
+    # ============================================================
 
     - name: Build hypervisor assembly
       shell: cmd
@@ -130,12 +91,108 @@ jobs:
         echo Library created successfully
         dir *.lib
 
+    - name: Link hypervisor driver
+      shell: cmd
+      working-directory: hypervisor/hypervisor
+      run: |
+        echo Linking hypervisor.sys...
+        echo WindowsSdkDir: %WindowsSdkDir%
+        echo WindowsSDKLibVersion: %WindowsSDKLibVersion%
+
+        link.exe /nologo /DRIVER /ENTRY:OmbraModuleInit /SUBSYSTEM:NATIVE ^
+          /NODEFAULTLIB /OUT:hypervisor.sys ^
+          hypervisor.lib ^
+          "%WindowsSdkDir%Lib\%WindowsSDKLibVersion%km\x64\ntoskrnl.lib" ^
+          "%WindowsSdkDir%Lib\%WindowsSDKLibVersion%km\x64\hal.lib"
+        if %ERRORLEVEL% neq 0 exit /b 1
+        echo Hypervisor driver linked successfully
+        dir *.sys
+
+    - name: Verify hypervisor.sys PE structure
+      shell: cmd
+      working-directory: hypervisor/hypervisor
+      run: |
+        echo Verifying hypervisor.sys PE structure...
+        dumpbin /HEADERS hypervisor.sys | findstr /C:"machine (x64)"
+        if %ERRORLEVEL% neq 0 (
+          echo ERROR: hypervisor.sys is not a valid x64 PE!
+          exit /b 1
+        )
+        dumpbin /HEADERS hypervisor.sys | findstr /C:".ombra"
+        if %ERRORLEVEL% neq 0 (
+          echo ERROR: hypervisor.sys missing .ombra section!
+          exit /b 1
+        )
+        echo hypervisor.sys PE structure verified
+
+    - name: Copy hypervisor to resources
+      shell: cmd
+      run: |
+        echo Copying hypervisor.sys to resources directory...
+        copy hypervisor\hypervisor\hypervisor.sys hypervisor\resources\hypervisor.sys
+        if %ERRORLEVEL% neq 0 exit /b 1
+        echo Contents of resources directory:
+        dir hypervisor\resources\*.sys
+
+    # ============================================================
+    # STEP 2: Build loader.exe (embeds hypervisor.sys + drivers)
+    # ============================================================
+
+    - name: Build usermode loader
+      shell: cmd
+      working-directory: hypervisor/usermode
+      run: |
+        echo Compiling resources (including hypervisor.sys)...
+        rc.exe /fo resources\loader.res resources\loader.rc
+        if %ERRORLEVEL% neq 0 exit /b 1
+        echo Resources compiled successfully
+
+        echo Building usermode loader with embedded resources...
+        cl.exe /O2 /W4 /WX- /Fe:loader.exe ^
+          main.c driver_interface.c payload_loader.c loader_api.c debug_reader.c ^
+          loader/hv_loader.c loader/pe_parser.c loader/pe_mapper.c ^
+          loader/pe_relocs.c loader/pe_iat.c loader/pe_imports.c ^
+          loader/pe_utils.c loader/pe_wipe.c loader/drv_loader.c loader/cleanup.c ^
+          resources/resource_extract.c ^
+          byovd/supdrv.c byovd/deployer.c byovd/crypto.c byovd/nt_helpers.c byovd/throttlestop.c ^
+          tests/detection_baseline.c ^
+          /I../shared /I. /Iresources ^
+          /link kernel32.lib advapi32.lib resources\loader.res
+        if %ERRORLEVEL% neq 0 exit /b 1
+        echo Usermode loader built successfully
+        dir *.exe
+
+    - name: Verify embedded resources
+      shell: cmd
+      working-directory: hypervisor/usermode
+      run: |
+        echo Verifying embedded resources in loader.exe...
+
+        echo Checking file size (should be over 500KB with hypervisor + drivers)...
+        for %%A in (loader.exe) do set SIZE=%%~zA
+        echo File size: %SIZE% bytes
+        if %SIZE% LSS 500000 (
+          echo ERROR: loader.exe too small - resources not embedded!
+          exit /b 1
+        )
+
+        echo Checking .rsrc section...
+        dumpbin /HEADERS loader.exe | findstr /C:".rsrc"
+        if %ERRORLEVEL% neq 0 (
+          echo ERROR: No .rsrc section found in loader.exe - resources not embedded!
+          exit /b 1
+        )
+
+        echo Resources verified successfully
+        echo Final loader.exe size: %SIZE% bytes
+
     - name: Upload hypervisor artifacts
       uses: actions/upload-artifact@v4
       with:
         name: hypervisor-core-${{ github.sha }}
         path: |
           hypervisor/usermode/loader.exe
+          hypervisor/hypervisor/hypervisor.sys
           hypervisor/hypervisor/hypervisor.lib
         retention-days: 30
 
