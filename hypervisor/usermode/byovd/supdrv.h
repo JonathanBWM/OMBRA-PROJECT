@@ -193,6 +193,20 @@ bool SupDrv_MsrRead(PSUPDRV_CTX ctx, UINT32 uMsr, UINT64* puValue, UINT32 idCpu)
 bool SupDrv_MsrWrite(PSUPDRV_CTX ctx, UINT32 uMsr, UINT64 uValue, UINT32 idCpu);
 
 //=============================================================================
+// Symbol Resolution (LDR_GET_SYMBOL)
+//=============================================================================
+
+/**
+ * Resolve kernel symbol address
+ *
+ * @param ctx Context
+ * @param szSymbol Symbol name (e.g., "MmGetSystemRoutineAddress")
+ * @param ppvSymbol Output: Symbol address in kernel
+ * @return true on success
+ */
+bool SupDrv_GetSymbol(PSUPDRV_CTX ctx, const char* szSymbol, void** ppvSymbol);
+
+//=============================================================================
 // IOCTL Helpers
 //=============================================================================
 

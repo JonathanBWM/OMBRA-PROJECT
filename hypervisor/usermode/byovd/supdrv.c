@@ -496,3 +496,56 @@ bool SupDrv_MsrWrite(PSUPDRV_CTX ctx, UINT32 uMsr, UINT64 uValue, UINT32 idCpu) 
     DbgLog("SupDrv_MsrWrite: SUCCESS");
     return true;
 }
+
+//=============================================================================
+// Symbol Resolution (LDR_GET_SYMBOL)
+//=============================================================================
+
+bool SupDrv_GetSymbol(PSUPDRV_CTX ctx, const char* szSymbol, void** ppvSymbol) {
+    if (!ctx->bInitialized) {
+        SupDrv_SetError(ctx, "Not initialized");
+        return false;
+    }
+
+    DbgLog("SupDrv_GetSymbol: Looking up '%s'", szSymbol);
+
+    // Local structure - matches supdrv_types.h patterns
+    struct {
+        SUPREQHDR Hdr;
+        void* pvImageBase;
+        char szSymbol[128];
+    } reqIn;
+
+    struct {
+        SUPREQHDR Hdr;
+        void* pvSymbol;
+    } reqOut;
+
+    memset(&reqIn, 0, sizeof(reqIn));
+    memset(&reqOut, 0, sizeof(reqOut));
+
+    SupDrv_FillHeader(ctx, &reqIn.Hdr, sizeof(reqIn), sizeof(reqOut));
+    reqIn.pvImageBase = NULL;  // NULL = ntoskrnl
+    strncpy_s(reqIn.szSymbol, sizeof(reqIn.szSymbol), szSymbol, _TRUNCATE);
+
+    if (!SupDrv_DoIoctl(ctx, SUP_IOCTL_LDR_GET_SYMBOL,
+                        &reqIn, sizeof(reqIn),
+                        &reqOut, sizeof(reqOut))) {
+        SupDrv_SetError(ctx, "LDR_GET_SYMBOL IOCTL failed: %lu", GetLastError());
+        return false;
+    }
+
+    if (reqOut.Hdr.rc != VINF_SUCCESS) {
+        SupDrv_SetError(ctx, "LDR_GET_SYMBOL returned rc=%d", reqOut.Hdr.rc);
+        return false;
+    }
+
+    if (!reqOut.pvSymbol) {
+        SupDrv_SetError(ctx, "Symbol '%s' not found", szSymbol);
+        return false;
+    }
+
+    *ppvSymbol = reqOut.pvSymbol;
+    DbgLog("SupDrv_GetSymbol: %s = %p", szSymbol, *ppvSymbol);
+    return true;
+}

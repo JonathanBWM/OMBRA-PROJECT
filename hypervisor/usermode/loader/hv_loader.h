@@ -1,7 +1,7 @@
 #ifndef HV_LOADER_H
 #define HV_LOADER_H
 
-#include "../driver_interface.h"
+#include "../byovd/supdrv.h"
 #include "../../shared/types.h"
 
 // =============================================================================
@@ -23,7 +23,7 @@
 
 // Context for loaded hypervisor
 typedef struct _HV_LOADER_CTX {
-    DRV_CONTEXT         Driver;         // BYOVD driver context
+    SUPDRV_CTX          Drv;            // SUPDrv context (correct structures!)
     U32                 CpuCount;       // CPU count (for display)
 
     // Hypervisor module
@@ -33,6 +33,11 @@ typedef struct _HV_LOADER_CTX {
     // State
     BOOL                Loaded;         // HvEntry called successfully
     BOOL                Running;        // Hypervisor is active
+
+    // SCM handles for driver service management
+    SC_HANDLE           hSCM;           // Service Control Manager
+    SC_HANDLE           hService;       // Service handle
+    BOOL                ServiceCreated; // We created the service
 } HV_LOADER_CTX;
 
 // =============================================================================
