@@ -357,14 +357,21 @@ bool TS_ReadPhys8(PTS_CTX ctx, UINT64 physAddr, UINT64* pValue) {
         return false;
     }
 
+    // Ghidra RE shows driver expects:
+    // - InputBufferLength = read size (1, 2, 4, or 8)
+    // - OutputBufferLength = always 8
+    // Driver reads InputBufferLength bytes from physical memory into output buffer
+
     DWORD dwReturned = 0;
+    UINT64 outputBuf = 0;  // Always 8 bytes for output
+
     BOOL result = DeviceIoControl(
         ctx->hDevice,
         TS_IOCTL_PHYS_READ,
         &physAddr,              // Input: 8-byte physical address
-        sizeof(physAddr),       // Input size: 8 bytes
-        pValue,                 // Output: where to store value
-        sizeof(*pValue),        // Output size: 8 bytes (determines read size!)
+        8,                      // Input size: 8 = read 8 bytes
+        &outputBuf,             // Output: 8-byte buffer
+        8,                      // Output size: always 8
         &dwReturned,
         NULL
     );
@@ -374,6 +381,7 @@ bool TS_ReadPhys8(PTS_CTX ctx, UINT64 physAddr, UINT64* pValue) {
         return false;
     }
 
+    *pValue = outputBuf;
     return true;
 }
 
@@ -382,14 +390,17 @@ bool TS_ReadPhys4(PTS_CTX ctx, UINT64 physAddr, UINT32* pValue) {
         return false;
     }
 
+    // Ghidra RE: InputBufferLength = read size, OutputBufferLength = always 8
     DWORD dwReturned = 0;
+    UINT64 outputBuf = 0;  // Always 8 bytes for output
+
     BOOL result = DeviceIoControl(
         ctx->hDevice,
         TS_IOCTL_PHYS_READ,
         &physAddr,
-        sizeof(physAddr),
-        pValue,
-        sizeof(*pValue),        // 4 bytes determines read size
+        4,                      // Input size: 4 = read 4 bytes
+        &outputBuf,             // Output: 8-byte buffer
+        8,                      // Output size: always 8
         &dwReturned,
         NULL
     );
@@ -399,6 +410,7 @@ bool TS_ReadPhys4(PTS_CTX ctx, UINT64 physAddr, UINT32* pValue) {
         return false;
     }
 
+    *pValue = (UINT32)outputBuf;
     return true;
 }
 
@@ -407,14 +419,17 @@ bool TS_ReadPhys2(PTS_CTX ctx, UINT64 physAddr, UINT16* pValue) {
         return false;
     }
 
+    // Ghidra RE: InputBufferLength = read size, OutputBufferLength = always 8
     DWORD dwReturned = 0;
+    UINT64 outputBuf = 0;  // Always 8 bytes for output
+
     BOOL result = DeviceIoControl(
         ctx->hDevice,
         TS_IOCTL_PHYS_READ,
         &physAddr,
-        sizeof(physAddr),
-        pValue,
-        sizeof(*pValue),        // 2 bytes determines read size
+        2,                      // Input size: 2 = read 2 bytes
+        &outputBuf,             // Output: 8-byte buffer
+        8,                      // Output size: always 8
         &dwReturned,
         NULL
     );
@@ -424,6 +439,7 @@ bool TS_ReadPhys2(PTS_CTX ctx, UINT64 physAddr, UINT16* pValue) {
         return false;
     }
 
+    *pValue = (UINT16)outputBuf;
     return true;
 }
 
@@ -432,14 +448,17 @@ bool TS_ReadPhys1(PTS_CTX ctx, UINT64 physAddr, UINT8* pValue) {
         return false;
     }
 
+    // Ghidra RE: InputBufferLength = read size, OutputBufferLength = always 8
     DWORD dwReturned = 0;
+    UINT64 outputBuf = 0;  // Always 8 bytes for output
+
     BOOL result = DeviceIoControl(
         ctx->hDevice,
         TS_IOCTL_PHYS_READ,
         &physAddr,
-        sizeof(physAddr),
-        pValue,
-        sizeof(*pValue),        // 1 byte determines read size
+        1,                      // Input size: 1 = read 1 byte
+        &outputBuf,             // Output: 8-byte buffer
+        8,                      // Output size: always 8
         &dwReturned,
         NULL
     );
@@ -449,6 +468,7 @@ bool TS_ReadPhys1(PTS_CTX ctx, UINT64 physAddr, UINT8* pValue) {
         return false;
     }
 
+    *pValue = (UINT8)outputBuf;
     return true;
 }
 

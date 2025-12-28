@@ -46,13 +46,13 @@
 // IOCTL Structures
 //=============================================================================
 //
-// NOTE: ThrottleStop.sys uses a DIFFERENT calling convention than most drivers:
+// NOTE: From Ghidra RE of ThrottleStop.sys (Dec 2025):
 //
 // READ (0x80006498):
-//   - Input buffer: ULONGLONG PhysicalAddress (8 bytes ONLY)
-//   - Input buffer size: 8
+//   - Input buffer: ULONGLONG PhysicalAddress (8 bytes)
+//   - Input buffer size: 1, 2, 4, or 8 (THIS determines read size!)
 //   - Output buffer: receives the read data
-//   - Output buffer size: 1, 2, 4, or 8 (THIS determines read size)
+//   - Output buffer size: MUST BE 8 (driver checks == 8)
 //
 // WRITE (0x8000649C):
 //   - Input buffer: PhysicalAddress (8 bytes) + Value (1/2/4/8 bytes)
@@ -60,7 +60,7 @@
 //   - Output buffer: unused (NULL)
 //   - Output buffer size: 0
 //
-// There is NO "Size" field - size is determined by buffer sizes!
+// The read size is determined by INPUT buffer size, NOT output buffer size!
 
 #pragma pack(push, 1)
 
