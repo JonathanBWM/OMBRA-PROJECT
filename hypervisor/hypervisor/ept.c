@@ -33,6 +33,43 @@ static bool EptSupportsWriteBack(void) {
 }
 
 // =============================================================================
+// Execute-Only Page Support Check
+// =============================================================================
+// Intel SDM Vol 3C, Table 24-7: Bit 0 of IA32_VMX_EPT_VPID_CAP
+// Execute-only pages (R=0, W=0, X=1) require this capability.
+// If not supported, fall back to RX pages (detectable via memory read).
+
+static bool g_EptSupportsExecuteOnly = false;
+static bool g_EptExecuteOnlyChecked = false;
+
+bool EptSupportsExecuteOnly(void) {
+    if (!g_EptExecuteOnlyChecked) {
+        U64 eptCap = __readmsr(MSR_IA32_VMX_EPT_VPID_CAP);
+
+        // Bit 0: Execute-only pages support
+        g_EptSupportsExecuteOnly = (eptCap & (1ULL << 0)) != 0;
+        g_EptExecuteOnlyChecked = true;
+
+        if (g_EptSupportsExecuteOnly) {
+            INFO("EPT: Execute-only pages (R=0 W=0 X=1) SUPPORTED - stealth mode available");
+        } else {
+            WARN("EPT: Execute-only pages NOT supported - falling back to RX (DETECTABLE)");
+            WARN("EPT: Memory scans will be able to read payload code!");
+        }
+    }
+    return g_EptSupportsExecuteOnly;
+}
+
+// Get safe execute permission - returns X-only if supported, RX if not
+U32 EptGetSafeExecutePermission(void) {
+    if (EptSupportsExecuteOnly()) {
+        return EPT_EXECUTE;  // R=0, W=0, X=1 - stealth
+    } else {
+        return EPT_READ | EPT_EXECUTE;  // R=1, W=0, X=1 - fallback (detectable)
+    }
+}
+
+// =============================================================================
 // EPTP Construction
 // =============================================================================
 
@@ -636,6 +673,309 @@ U64* EptGetEntry(EPT_STATE* ept, U64 guestPhysical) {
     }
 
     return &ept->Pdpt[pdptIndex].Value;
+}
+
+// =============================================================================
+// EPT 4KB Page Operations
+// =============================================================================
+//
+// Usage Example - Execute-Only Pages for Shadow Hooks:
+//
+//   // 1. Create execute-only view for hooked code page
+//   U64 hookGPA = 0x7FFF12340000;  // Guest physical address to hook
+//   status = EptSetPagePermissions(ept, hookGPA, EPT_EXECUTE);
+//   // Guest can now EXECUTE but not READ/WRITE this page
+//   // Attempts to read will cause EPT violation
+//
+//   // 2. Create separate read-only view for clean code
+//   U64 cleanPhysical = 0x80000000;  // Our allocated physical memory
+//   status = EptMapGuestToHost(ept, hookGPA, cleanPhysical,
+//                               EPT_READ, EPT_MEMORY_TYPE_WB);
+//   // This creates an EPT remapping where reads see clean memory
+//   // but executes still hit the original (hooked) page
+//
+//   // 3. Remove a mapping when done
+//   status = EptUnmapPage(ept, hookGPA);
+//   // Page becomes not-present, EPT violations on all accesses
+//
+// Note: Execute-only (R=0, W=0, X=1) requires mode-based EPT execution
+// control. Check IA32_VMX_EPT_VPID_CAP MSR bit 0 for support.
+// On older CPUs without mode-based EPT, use EPT_RX instead of EPT_EXECUTE.
+//
+// =============================================================================
+
+// Get the EPT PTE for a 4KB page (returns NULL if not split to 4KB level)
+EPT_PTE* EptGet4KbEntry(EPT_STATE* ept, U64 guestPhysical) {
+    U32 pml4Index, pdptIndex, pdIndex, ptIndex;
+    EPT_PML4E* pml4e;
+    EPT_PDPTE* pdpte;
+    EPT_PDE* pde;
+    EPT_PDE* pd;
+    EPT_PTE* pt;
+    U64 ptPhysical, offset;
+
+    if (!ept || !ept->Initialized) {
+        return NULL;
+    }
+
+    // Get indices from GPA
+    pml4Index = EPT_PML4_INDEX(guestPhysical);
+    pdptIndex = EPT_PDPT_INDEX(guestPhysical);
+    pdIndex = EPT_PD_INDEX(guestPhysical);
+    ptIndex = EPT_PT_INDEX(guestPhysical);
+
+    // Currently only PML4 entry 0 is valid (512GB)
+    if (pml4Index != 0) {
+        return NULL;
+    }
+
+    // Check PML4E
+    pml4e = &ept->Pml4[pml4Index];
+    if (!pml4e->Read) {
+        return NULL;
+    }
+
+    // Check PDPTE
+    if (pdptIndex >= EPT_ENTRIES_PER_TABLE) {
+        return NULL;
+    }
+
+    pdpte = &ept->Pdpt[pdptIndex];
+    if (!pdpte->Pointer.Read) {
+        return NULL;
+    }
+
+    // If PDPTE is a 1GB large page, not split to 4KB
+    if (pdpte->LargePage.LargePage) {
+        return NULL;
+    }
+
+    // Get PD table
+    pd = (EPT_PDE*)ept->SplitPdTables[pdptIndex];
+    if (!pd) {
+        return NULL;
+    }
+
+    if (pdIndex >= EPT_ENTRIES_PER_TABLE) {
+        return NULL;
+    }
+
+    pde = &pd[pdIndex];
+    if (!pde->Pointer.Read) {
+        return NULL;
+    }
+
+    // If PDE is a 2MB large page, not split to 4KB
+    if (pde->LargePage.LargePage) {
+        return NULL;
+    }
+
+    // Get PT physical address from PDE
+    ptPhysical = (U64)pde->Pointer.PtPhysAddr << 12;
+
+    // Convert PT physical to virtual by calculating offset from EPT memory base
+    // All EPT structures are allocated from a contiguous physical memory pool
+    if (ptPhysical < ept->EptMemoryPhysical) {
+        return NULL;
+    }
+
+    offset = ptPhysical - ept->EptMemoryPhysical;
+    if (offset >= (U64)ept->TotalPagesAllocated * EPT_PAGE_SIZE_4K) {
+        return NULL;
+    }
+
+    pt = (EPT_PTE*)((U8*)ept->EptMemoryBase + offset);
+
+    if (ptIndex >= EPT_ENTRIES_PER_TABLE) {
+        return NULL;
+    }
+
+    return &pt[ptIndex];
+}
+
+// Set EPT permissions on a specific 4KB page (splits large pages if needed)
+OMBRA_STATUS EptSetPagePermissions(
+    EPT_STATE* ept,
+    U64 guestPhysical,
+    U32 permissions
+) {
+    EPT_PTE* pte;
+    OMBRA_STATUS status;
+
+    if (!ept || !ept->Initialized) {
+        return OMBRA_ERROR_INVALID_PARAM;
+    }
+
+    TRACE("EPT: Setting permissions 0x%x for GPA 0x%llx", permissions, guestPhysical);
+
+    // Split to 4KB level if needed
+    status = EptSplitLargePage(ept, guestPhysical);
+    if (OMBRA_FAILED(status)) {
+        ERR("EPT: Failed to split page for GPA 0x%llx", guestPhysical);
+        return status;
+    }
+
+    // Get the 4KB PTE
+    pte = EptGet4KbEntry(ept, guestPhysical);
+    if (!pte) {
+        ERR("EPT: Could not get 4KB entry for GPA 0x%llx after split", guestPhysical);
+        return OMBRA_ERROR_NOT_FOUND;
+    }
+
+    // Set permissions
+    pte->Read = (permissions & EPT_READ) ? 1 : 0;
+    pte->Write = (permissions & EPT_WRITE) ? 1 : 0;
+    pte->Execute = (permissions & EPT_EXECUTE) ? 1 : 0;
+
+    // Execute-only requires mode-based EPT support (or newer Intel CPUs)
+    // On older CPUs, execute-only (R=0, W=0, X=1) may not be supported
+    // For maximum compatibility, execute-only should be combined with EPT user-mode bit
+
+    TRACE("EPT: Set GPA 0x%llx permissions R=%u W=%u X=%u",
+          guestPhysical, pte->Read, pte->Write, pte->Execute);
+
+    // Invalidate EPT to ensure changes take effect
+    EptInvalidate(ept, INVEPT_TYPE_SINGLE_CONTEXT);
+
+    return OMBRA_SUCCESS;
+}
+
+// Map guest physical to different host physical (create new EPT mapping)
+OMBRA_STATUS EptMapGuestToHost(
+    EPT_STATE* ept,
+    U64 guestPhysical,
+    U64 hostPhysical,
+    U32 permissions,
+    U8 memoryType
+) {
+    EPT_PTE* pte;
+    OMBRA_STATUS status;
+
+    if (!ept || !ept->Initialized) {
+        return OMBRA_ERROR_INVALID_PARAM;
+    }
+
+    // Validate memory type
+    if (memoryType > 7) {
+        return OMBRA_ERROR_INVALID_PARAM;
+    }
+
+    INFO("EPT: Mapping GPA 0x%llx -> HPA 0x%llx (perm=0x%x, type=%u)",
+         guestPhysical, hostPhysical, permissions, memoryType);
+
+    // Split to 4KB level if needed
+    status = EptSplitLargePage(ept, guestPhysical);
+    if (OMBRA_FAILED(status)) {
+        ERR("EPT: Failed to split page for GPA 0x%llx", guestPhysical);
+        return status;
+    }
+
+    // Get the 4KB PTE
+    pte = EptGet4KbEntry(ept, guestPhysical);
+    if (!pte) {
+        ERR("EPT: Could not get 4KB entry for GPA 0x%llx after split", guestPhysical);
+        return OMBRA_ERROR_NOT_FOUND;
+    }
+
+    // Set permissions
+    pte->Read = (permissions & EPT_READ) ? 1 : 0;
+    pte->Write = (permissions & EPT_WRITE) ? 1 : 0;
+    pte->Execute = (permissions & EPT_EXECUTE) ? 1 : 0;
+
+    // Set memory type
+    pte->MemoryType = memoryType;
+
+    // Set host physical address (bits 51:12)
+    pte->PagePhysAddr = hostPhysical >> 12;
+
+    TRACE("EPT: Mapped GPA 0x%llx to HPA 0x%llx",
+          guestPhysical, hostPhysical);
+
+    // Invalidate EPT to ensure changes take effect
+    EptInvalidate(ept, INVEPT_TYPE_SINGLE_CONTEXT);
+
+    return OMBRA_SUCCESS;
+}
+
+// =============================================================================
+// EPT Self-Protection
+// =============================================================================
+
+/**
+ * EptProtectSelf - Hide hypervisor memory from guest reads
+ *
+ * Remaps all HV pages to point to a blank (zeroed) page.
+ * Guest reads return zeros, execution still works via X permission.
+ */
+OMBRA_STATUS EptProtectSelf(
+    EPT_STATE* ept,
+    U64 hvPhysBase,
+    U64 hvPhysSize,
+    U64 blankPagePhys
+)
+{
+    U64 addr;
+    U32 permissions;
+    OMBRA_STATUS status;
+
+    permissions = EptGetSafeExecutePermission();
+
+    INFO("EPT: Self-protecting HV range 0x%llx - 0x%llx (blank=0x%llx)",
+         hvPhysBase, hvPhysBase + hvPhysSize, blankPagePhys);
+
+    for (addr = hvPhysBase; addr < hvPhysBase + hvPhysSize; addr += PAGE_SIZE) {
+        status = EptMapGuestToHost(
+            ept,
+            addr,
+            blankPagePhys,
+            permissions,
+            EPT_MEMORY_TYPE_WB
+        );
+
+        if (OMBRA_FAILED(status)) {
+            ERR("EPT: Failed to protect page 0x%llx", addr);
+            return status;
+        }
+    }
+
+    INFO("EPT: Self-protection complete (%llu pages)", hvPhysSize / PAGE_SIZE);
+    return OMBRA_SUCCESS;
+}
+
+// Remove EPT mapping (set entry to not-present)
+OMBRA_STATUS EptUnmapPage(EPT_STATE* ept, U64 guestPhysical) {
+    EPT_PTE* pte;
+    OMBRA_STATUS status;
+
+    if (!ept || !ept->Initialized) {
+        return OMBRA_ERROR_INVALID_PARAM;
+    }
+
+    INFO("EPT: Unmapping GPA 0x%llx", guestPhysical);
+
+    // Split to 4KB level if needed
+    status = EptSplitLargePage(ept, guestPhysical);
+    if (OMBRA_FAILED(status)) {
+        ERR("EPT: Failed to split page for GPA 0x%llx", guestPhysical);
+        return status;
+    }
+
+    // Get the 4KB PTE
+    pte = EptGet4KbEntry(ept, guestPhysical);
+    if (!pte) {
+        ERR("EPT: Could not get 4KB entry for GPA 0x%llx after split", guestPhysical);
+        return OMBRA_ERROR_NOT_FOUND;
+    }
+
+    // Set entry to not-present (all permissions = 0)
+    pte->Value = 0;
+
+    TRACE("EPT: Unmapped GPA 0x%llx", guestPhysical);
+
+    // Invalidate EPT to ensure changes take effect
+    EptInvalidate(ept, INVEPT_TYPE_SINGLE_CONTEXT);
+
+    return OMBRA_SUCCESS;
 }
 
 // =============================================================================

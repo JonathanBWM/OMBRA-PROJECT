@@ -273,6 +273,22 @@ static int OmbraInitialize(HV_INIT_PARAMS* params) {
     }
     INFO("EPT initialized");
 
+    // Self-protection: Hide hypervisor memory from guest
+    if (params->HvPhysBase != 0 && params->BlankPagePhys != 0) {
+        status = EptProtectSelf(
+            &g_EptState,
+            params->HvPhysBase,
+            params->HvPhysSize,
+            params->BlankPagePhys
+        );
+        if (OMBRA_FAILED(status)) {
+            WARN("EPT self-protection failed: 0x%X (continuing anyway)", status);
+            // Don't fail init - self-protection is optional enhancement
+        } else {
+            INFO("EPT self-protection enabled");
+        }
+    }
+
     // Initialize hook manager
     status = HookManagerInit(&g_HookManager, &g_EptState);
     if (OMBRA_FAILED(status)) {

@@ -108,6 +108,38 @@ OMBRA_STATUS EptSplit1GbTo2Mb(EPT_STATE* ept, U64 guestPhysical);
 OMBRA_STATUS EptSplit2MbTo4Kb(EPT_STATE* ept, U64 guestPhysical);
 
 // =============================================================================
+// EPT 4KB Page Operations
+// =============================================================================
+
+// Get the EPT PTE for a 4KB page
+// Returns NULL if not split to 4KB level yet
+EPT_PTE* EptGet4KbEntry(EPT_STATE* ept, U64 guestPhysical);
+
+// Set EPT permissions on a specific 4KB page
+// Automatically splits large pages if needed
+// permissions: EPT_READ, EPT_WRITE, EPT_EXECUTE flags (or EPT_X_ONLY for execute-only)
+OMBRA_STATUS EptSetPagePermissions(
+    EPT_STATE* ept,
+    U64 guestPhysical,
+    U32 permissions
+);
+
+// Map guest physical to different host physical
+// Used for EPT-only memory where we redirect GPAs to our physical pool
+// Automatically splits to 4KB pages
+OMBRA_STATUS EptMapGuestToHost(
+    EPT_STATE* ept,
+    U64 guestPhysical,
+    U64 hostPhysical,
+    U32 permissions,
+    U8 memoryType
+);
+
+// Remove EPT mapping (set entry to not-present)
+// Automatically splits to 4KB pages
+OMBRA_STATUS EptUnmapPage(EPT_STATE* ept, U64 guestPhysical);
+
+// =============================================================================
 // EPT Query Functions
 // =============================================================================
 
@@ -116,6 +148,28 @@ U64* EptGetEntry(EPT_STATE* ept, U64 guestPhysical);
 
 // Check if EPT supports 1GB pages
 bool EptSupports1GbPages(void);
+
+// Check if EPT supports execute-only pages (R=0, W=0, X=1)
+// Required for stealth mode - without this, payloads are readable by memory scans
+bool EptSupportsExecuteOnly(void);
+
+// Get safe execute permission for payload pages
+// Returns EPT_EXECUTE (X-only) if supported, EPT_READ|EPT_EXECUTE (RX) if not
+// ALWAYS use this instead of hardcoding EPT_EXECUTE for stealth-critical code
+U32 EptGetSafeExecutePermission(void);
+
+// =============================================================================
+// EPT Self-Protection
+// =============================================================================
+
+// Hide hypervisor memory from guest reads
+// Maps HV pages to blank page with execute-only permission
+OMBRA_STATUS EptProtectSelf(
+    EPT_STATE* ept,
+    U64 hvPhysBase,
+    U64 hvPhysSize,
+    U64 blankPagePhys
+);
 
 // =============================================================================
 // INVEPT Support

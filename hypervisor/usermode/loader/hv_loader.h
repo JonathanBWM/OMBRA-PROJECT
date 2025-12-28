@@ -24,6 +24,9 @@ typedef struct _HV_MEMORY_LAYOUT {
     // Params page
     ALLOC_INFO  ParamsPage;         // 1 page for HV_INIT_PARAMS
 
+    // Self-protection
+    ALLOC_INFO  BlankPage;          // 1 page, zeroed for memory hiding
+
     // Debug (non-paged OK)
     ALLOC_INFO  DebugBuffer;        // DEBUG_BUFFER_PAGES pages
 } HV_MEMORY_LAYOUT;

@@ -117,6 +117,53 @@ static inline U64 ombra_deobf_magic(U64 obfuscated) {
 #define VMCALL_POLL_ALLOC_STATUS    0x3031ULL
 #define VMCALL_FREE_MDL_MEMORY      0x3032ULL
 
+// Path B Option 2: EPT-only memory - hypervisor-managed mappings invisible to Windows
+#define VMCALL_CREATE_EPT_MAPPING   0x3040ULL
+#define VMCALL_DESTROY_EPT_MAPPING  0x3041ULL
+#define VMCALL_SET_EPT_PERMISSIONS  0x3042ULL
+
+// Anti-detection: Memory query spoofing
+// EAC uses NtQueryVirtualMemory(MemoryWorkingSetExInformation) to detect EPT memory
+// SharedCount==0 and Shared==0 indicates non-backed executable memory
+#define VMCALL_REGISTER_EPT_RANGE   0x3050ULL  // Register EPT range for spoof
+#define VMCALL_UNREGISTER_EPT_RANGE 0x3051ULL  // Unregister EPT range
+
+// EPT mapping flags
+#define EPT_MAP_FLAG_STEALTH        (1 << 0)  // Use execute-only for .text
+#define EPT_MAP_FLAG_AUTO_VA        (1 << 1)  // Auto-find kernel VA range
+#define EPT_MAP_FLAG_AUTO_PHYS      (1 << 2)  // Allocate physical pages from HV pool
+
+// VMCALL_CREATE_EPT_MAPPING structures
+typedef struct _VMCALL_EPT_MAP_IN {
+    U64     RequestedVA;    // Desired kernel VA (0 = auto-find)
+    U64     PhysicalAddr;   // Physical pages (0 = allocate from HV pool)
+    U64     Size;           // Bytes to map (page-aligned)
+    U32     Permissions;    // Initial EPT permissions (EPT_READ|EPT_WRITE|EPT_EXECUTE)
+    U32     Flags;          // EPT_MAP_FLAG_*
+} VMCALL_EPT_MAP_IN;
+
+typedef struct _VMCALL_EPT_MAP_OUT {
+    U64     KernelVA;       // Resulting kernel virtual address
+    U64     PhysicalAddr;   // Physical base address (for direct writes)
+    U32     Status;         // OMBRA_STATUS code
+    U32     PagesAllocated; // Number of 4KB pages allocated
+} VMCALL_EPT_MAP_OUT;
+
+// VMCALL_DESTROY_EPT_MAPPING structures
+typedef struct _VMCALL_EPT_UNMAP_IN {
+    U64     KernelVA;       // VA to unmap
+    U64     Size;           // Size to unmap
+    U32     Flags;          // Reserved
+} VMCALL_EPT_UNMAP_IN;
+
+// VMCALL_SET_EPT_PERMISSIONS structures
+typedef struct _VMCALL_EPT_PERM_IN {
+    U64     KernelVA;       // Start VA
+    U64     Size;           // Size in bytes
+    U32     Permissions;    // New EPT permissions
+    U32     Flags;          // Reserved
+} VMCALL_EPT_PERM_IN;
+
 // Windows kernel offsets (for EPROCESS walking)
 // These vary by Windows version - detect at runtime or hardcode for target
 // NOTE: Use U32 for consistency with EPROCESS_OFFSETS_EX and future versions
@@ -201,6 +248,11 @@ typedef struct _HV_INIT_PARAMS {
 
     // Auth
     U64     VmcallKey;
+
+    // Self-protection (memhv-style memory hiding)
+    U64     HvPhysBase;         // Physical address where HV is mapped
+    U64     HvPhysSize;         // Size of HV in bytes (page-aligned)
+    U64     BlankPagePhys;      // Physical address of zeroed page for hiding
 
     // Flags
     U32     Flags;
