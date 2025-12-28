@@ -399,10 +399,14 @@ void OmbraShutdown(void) {
 }
 
 // =============================================================================
-// Helper: Get CPU Context
+// Helper: Get CPU Context (local to entry.c)
 // =============================================================================
+//
+// NOTE: This is a LOCAL helper that accesses g_CpuContexts (entry.c's local array).
+// The EXTERNAL VmxGetCurrentCpu is defined in vmx.c and accesses g_Ombra.Cpus.
+// Making this static avoids duplicate symbol errors during linking.
 
-VMX_CPU* VmxGetCurrentCpu(void) {
+static VMX_CPU* GetLocalCpuContext(void) {
     int cpuInfo[4];
     __cpuidex(cpuInfo, 0x1, 0);
 
