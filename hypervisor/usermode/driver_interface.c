@@ -188,16 +188,19 @@ DRV_STATUS DrvEstablishSession(DRV_CONTEXT* ctx) {
     SUPCOOKIE_IN in = {0};
     SUPCOOKIE_OUT out = {0};
 
-    // Fill header (no cookies yet - this is our first call)
+    // Fill header - LDPlayer requires specific initial values
     in.Hdr.cbIn = sizeof(in);
     in.Hdr.cbOut = sizeof(out);
+    in.Hdr.fFlags = 0x42000042;       // SUPREQHDR_FLAGS_MAGIC
+    in.Hdr.u32Cookie = 0x69726F74;    // "tori" - LDPlayer initial cookie
+    in.Hdr.u32SessionCookie = 0x69726F74;
 
     // Magic string
     memcpy(in.szMagic, SUP_COOKIE_MAGIC, sizeof(SUP_COOKIE_MAGIC));
 
-    // Request version (VirtualBox 6.1.x compatible)
-    in.u32ReqVersion = 0x00320000;  // LDPlayer 9.x
-    in.u32MinVersion = 0x00230000;  // 6.0.0
+    // Request version - LDPlayer 9.x
+    in.u32ReqVersion = 0x00320000;
+    in.u32MinVersion = 0x00320000;
 
     if (!DoIoctl(ctx->hDevice, SUP_IOCTL_COOKIE, &in, sizeof(in), &out, sizeof(out), NULL)) {
         return DRV_ERROR_SESSION_INIT;
