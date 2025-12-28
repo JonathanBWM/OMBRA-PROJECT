@@ -3,6 +3,7 @@
 
 #include "driver_interface.h"
 #include "ld9boxsup.h"
+#include "byovd/nt_defs.h"
 #include <stdio.h>
 
 // =============================================================================
@@ -154,27 +155,27 @@ DRV_STATUS DrvUnloadDriver(DRV_CONTEXT* ctx) {
 // =============================================================================
 
 DRV_STATUS DrvOpenDevice(DRV_CONTEXT* ctx) {
-    // Try multiple device paths (driver may create different device names)
-    static const wchar_t* devicePaths[] = {
-        L"\\\\.\\Ld9BoxDrv",   // Primary LDPlayer device
-        L"\\\\.\\Ld9BoxDrvU",  // LDPlayer user device
-        L"\\\\.\\VBoxDrv",     // VirtualBox fallback
+    // Initialize NT API functions if not already done
+    if (!NtInit()) {
+        printf("[-] Failed to initialize NT API functions\n");
+        return DRV_ERROR_OPEN_DEVICE;
+    }
+
+    // The driver creates NT device paths but NO DosDevices symlink!
+    // LDPlayer's installer normally creates the symlink, but we're loading standalone.
+    // Solution: Use NtOpenDevice with NT paths instead of CreateFileW with Win32 paths.
+    static const wchar_t* ntDevicePaths[] = {
+        L"\\Device\\Ld9BoxDrv",   // Primary LDPlayer device (NT path)
+        L"\\Device\\Ld9BoxDrvU",  // LDPlayer user device (NT path)
+        L"\\Device\\VBoxDrv",     // VirtualBox fallback (NT path)
     };
-    static const int devicePathCount = sizeof(devicePaths) / sizeof(devicePaths[0]);
+    static const int devicePathCount = sizeof(ntDevicePaths) / sizeof(ntDevicePaths[0]);
 
     for (int i = 0; i < devicePathCount; i++) {
-        ctx->hDevice = CreateFileW(
-            devicePaths[i],
-            GENERIC_READ | GENERIC_WRITE,
-            0,
-            NULL,
-            OPEN_EXISTING,
-            FILE_ATTRIBUTE_NORMAL,
-            NULL
-        );
+        ctx->hDevice = NtOpenDevice(ntDevicePaths[i]);
 
-        if (ctx->hDevice != INVALID_HANDLE_VALUE) {
-            printf("[+] Opened device: %ls\n", devicePaths[i]);
+        if (ctx->hDevice != INVALID_HANDLE_VALUE && ctx->hDevice != NULL) {
+            printf("[+] Opened device: %ls\n", ntDevicePaths[i]);
             return DRV_SUCCESS;
         }
     }
