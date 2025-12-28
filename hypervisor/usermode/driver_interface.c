@@ -154,22 +154,33 @@ DRV_STATUS DrvUnloadDriver(DRV_CONTEXT* ctx) {
 // =============================================================================
 
 DRV_STATUS DrvOpenDevice(DRV_CONTEXT* ctx) {
-    ctx->hDevice = CreateFileW(
-        LD9BOXSUP_DEVICE_PATH,
-        GENERIC_READ | GENERIC_WRITE,
-        0,
-        NULL,
-        OPEN_EXISTING,
-        FILE_ATTRIBUTE_NORMAL,
-        NULL
-    );
+    // Try multiple device paths (driver may create different device names)
+    static const wchar_t* devicePaths[] = {
+        L"\\\\.\\Ld9BoxDrv",   // Primary LDPlayer device
+        L"\\\\.\\Ld9BoxDrvU",  // LDPlayer user device
+        L"\\\\.\\VBoxDrv",     // VirtualBox fallback
+    };
+    static const int devicePathCount = sizeof(devicePaths) / sizeof(devicePaths[0]);
 
-    if (ctx->hDevice == INVALID_HANDLE_VALUE) {
-        ctx->hDevice = NULL;
-        return DRV_ERROR_OPEN_DEVICE;
+    for (int i = 0; i < devicePathCount; i++) {
+        ctx->hDevice = CreateFileW(
+            devicePaths[i],
+            GENERIC_READ | GENERIC_WRITE,
+            0,
+            NULL,
+            OPEN_EXISTING,
+            FILE_ATTRIBUTE_NORMAL,
+            NULL
+        );
+
+        if (ctx->hDevice != INVALID_HANDLE_VALUE) {
+            printf("[+] Opened device: %ls\n", devicePaths[i]);
+            return DRV_SUCCESS;
+        }
     }
 
-    return DRV_SUCCESS;
+    ctx->hDevice = NULL;
+    return DRV_ERROR_OPEN_DEVICE;
 }
 
 DRV_STATUS DrvEstablishSession(DRV_CONTEXT* ctx) {
