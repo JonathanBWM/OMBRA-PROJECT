@@ -95,16 +95,22 @@ jobs:
       shell: cmd
       working-directory: hypervisor/hypervisor
       run: |
-        echo Linking hypervisor.sys...
+        echo Linking ombra_hv.sys...
         echo.
         echo NOTE: Hypervisor uses late-bound imports via params struct
         echo       No kernel libs needed - all APIs resolved at runtime by loader
+        echo       Output name differs from .lib to avoid LNK1149
         echo.
 
         link.exe /nologo /DRIVER /ENTRY:OmbraModuleInit /SUBSYSTEM:NATIVE ^
-          /NODEFAULTLIB /OUT:hypervisor.sys ^
+          /NODEFAULTLIB /FORCE:MULTIPLE /OUT:ombra_hv.sys ^
           hypervisor.lib
         if %ERRORLEVEL% neq 0 exit /b 1
+
+        echo Renaming to hypervisor.sys...
+        move ombra_hv.sys hypervisor.sys
+        if %ERRORLEVEL% neq 0 exit /b 1
+
         echo Hypervisor driver linked successfully
         dir *.sys
 
