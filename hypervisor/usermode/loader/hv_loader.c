@@ -451,7 +451,28 @@ BOOL HvLoaderLoad(HV_LOADER_CTX* ctx, const void* hvImage, U32 hvImageSize) {
 
     // 5. Apply -618 bypass NOW (driver is loaded, we can find its base)
     printf("[*] Applying -618 bypass before LDR_OPEN...\n");
+
+    // DEBUG: Print ctx state BEFORE bypass
+    printf("[DEBUG] BEFORE Apply618Bypass:\n");
+    printf("[DEBUG]   ctx=%p\n", (void*)ctx);
+    printf("[DEBUG]   ctx->Drv.hDevice=%p\n", ctx->Drv.hDevice);
+    printf("[DEBUG]   ctx->Drv.Cookie=0x%08X\n", ctx->Drv.Cookie);
+    printf("[DEBUG]   ctx->Drv.SessionCookie=0x%08X\n", ctx->Drv.SessionCookie);
+    printf("[DEBUG]   ctx->Drv.pSession=0x%llX\n", (unsigned long long)ctx->Drv.pSession);
+    printf("[DEBUG]   ctx->Drv.bInitialized=%d\n", ctx->Drv.bInitialized);
+    fflush(stdout);
+
     Apply618Bypass();
+
+    // DEBUG: Print ctx state AFTER bypass
+    printf("[DEBUG] AFTER Apply618Bypass:\n");
+    printf("[DEBUG]   ctx=%p\n", (void*)ctx);
+    printf("[DEBUG]   ctx->Drv.hDevice=%p\n", ctx->Drv.hDevice);
+    printf("[DEBUG]   ctx->Drv.Cookie=0x%08X\n", ctx->Drv.Cookie);
+    printf("[DEBUG]   ctx->Drv.SessionCookie=0x%08X\n", ctx->Drv.SessionCookie);
+    printf("[DEBUG]   ctx->Drv.pSession=0x%llX\n", (unsigned long long)ctx->Drv.pSession);
+    printf("[DEBUG]   ctx->Drv.bInitialized=%d\n", ctx->Drv.bInitialized);
+    fflush(stdout);
 
     // 6. Allocate kernel memory for hypervisor (calls LDR_OPEN)
     printf("[*] Allocating kernel memory for hypervisor...\n");

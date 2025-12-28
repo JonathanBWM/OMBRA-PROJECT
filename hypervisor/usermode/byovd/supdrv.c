@@ -319,6 +319,15 @@ bool SupDrv_LdrOpen(PSUPDRV_CTX ctx, UINT32 cbImage, void** ppvImageBase) {
 
     DbgLog("SupDrv_LdrOpen: Requesting %u bytes", cbImage);
 
+    // DEBUG: Verify ctx integrity
+    DbgLog("[DEBUG LDR_OPEN] Entry - ctx=%p", ctx);
+    DbgLog("[DEBUG LDR_OPEN]   hDevice=%p", ctx->hDevice);
+    DbgLog("[DEBUG LDR_OPEN]   Cookie=0x%08X", ctx->Cookie);
+    DbgLog("[DEBUG LDR_OPEN]   SessionCookie=0x%08X", ctx->SessionCookie);
+    DbgLog("[DEBUG LDR_OPEN]   pSession=0x%llX", (unsigned long long)ctx->pSession);
+    DbgLog("[DEBUG LDR_OPEN]   bInitialized=%d", ctx->bInitialized);
+    DbgLog("[DEBUG LDR_OPEN]   cbImage=%u", cbImage);
+
     SUPLDROPEN req;
     memset(&req, 0, sizeof(req));
     SupDrv_FillHeader(ctx, &req.Hdr, LDR_OPEN_SIZE_IN, LDR_OPEN_SIZE_OUT);
@@ -328,10 +337,23 @@ bool SupDrv_LdrOpen(PSUPDRV_CTX ctx, UINT32 cbImage, void** ppvImageBase) {
     GetModuleName(req.u.In.szName, sizeof(req.u.In.szName));
     GetModulePath(req.u.In.szFilename, sizeof(req.u.In.szFilename));
 
+    // DEBUG: Print request structure
+    DbgLog("[DEBUG LDR_OPEN] Request structure:");
+    DbgLog("[DEBUG LDR_OPEN]   Hdr.u32Cookie=0x%08X", req.Hdr.u32Cookie);
+    DbgLog("[DEBUG LDR_OPEN]   Hdr.u32SessionCookie=0x%08X", req.Hdr.u32SessionCookie);
+    DbgLog("[DEBUG LDR_OPEN]   Hdr.cbIn=0x%X (%u)", req.Hdr.cbIn, req.Hdr.cbIn);
+    DbgLog("[DEBUG LDR_OPEN]   Hdr.cbOut=0x%X (%u)", req.Hdr.cbOut, req.Hdr.cbOut);
+    DbgLog("[DEBUG LDR_OPEN]   Hdr.fFlags=0x%08X", req.Hdr.fFlags);
+    DbgLog("[DEBUG LDR_OPEN]   In.cbImageWithTabs=%u", req.u.In.cbImageWithTabs);
+    DbgLog("[DEBUG LDR_OPEN]   In.cbImageBits=%u", req.u.In.cbImageBits);
+    DbgLog("[DEBUG LDR_OPEN]   In.szName='%s'", req.u.In.szName);
+
     if (!SupDrv_DoIoctl(ctx, SUP_IOCTL_LDR_OPEN,
                         &req, LDR_OPEN_SIZE_IN,
                         &req, LDR_OPEN_SIZE_OUT)) {
-        SupDrv_SetError(ctx, "LDR_OPEN IOCTL failed: %lu", GetLastError());
+        DWORD err = GetLastError();
+        DbgLog("[DEBUG LDR_OPEN] DeviceIoControl FAILED, error=%lu", err);
+        SupDrv_SetError(ctx, "LDR_OPEN IOCTL failed: %lu", err);
         return false;
     }
 
