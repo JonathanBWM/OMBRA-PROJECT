@@ -365,15 +365,6 @@ bool TS_ReadPhys8(PTS_CTX ctx, UINT64 physAddr, UINT64* pValue) {
     DWORD dwReturned = 0;
     UINT64 outputBuf = 0;  // Always 8 bytes for output
 
-    // DEBUG: Print exact parameters
-    static int debugCount = 0;
-    if (debugCount < 3) {
-        printf("[DEBUG TS_ReadPhys8] hDevice=%p IOCTL=0x%X inBuf=%p inSize=8 outSize=8 physAddr=0x%016llX\n",
-               ctx->hDevice, TS_IOCTL_PHYS_READ, &physAddr, physAddr);
-        fflush(stdout);
-        debugCount++;
-    }
-
     BOOL result = DeviceIoControl(
         ctx->hDevice,
         TS_IOCTL_PHYS_READ,
@@ -386,14 +377,7 @@ bool TS_ReadPhys8(PTS_CTX ctx, UINT64 physAddr, UINT64* pValue) {
     );
 
     if (!result) {
-        DWORD err = GetLastError();
-        static int errCount = 0;
-        if (errCount < 5) {
-            printf("[DEBUG TS_ReadPhys8] DeviceIoControl FAILED: result=FALSE err=%lu dwReturned=%lu\n", err, dwReturned);
-            fflush(stdout);
-            errCount++;
-        }
-        DbgLog("TS_ReadPhys8: FAILED at PA 0x%016llX: error %lu", physAddr, err);
+        // Don't log every failure - memory holes are expected
         return false;
     }
 
@@ -422,7 +406,7 @@ bool TS_ReadPhys4(PTS_CTX ctx, UINT64 physAddr, UINT32* pValue) {
     );
 
     if (!result) {
-        DbgLog("TS_ReadPhys4: FAILED at PA 0x%016llX: error %lu", physAddr, GetLastError());
+        // Don't log every failure - memory holes are expected
         return false;
     }
 
@@ -451,7 +435,7 @@ bool TS_ReadPhys2(PTS_CTX ctx, UINT64 physAddr, UINT16* pValue) {
     );
 
     if (!result) {
-        DbgLog("TS_ReadPhys2: FAILED at PA 0x%016llX: error %lu", physAddr, GetLastError());
+        // Don't log every failure - memory holes are expected
         return false;
     }
 
@@ -480,7 +464,7 @@ bool TS_ReadPhys1(PTS_CTX ctx, UINT64 physAddr, UINT8* pValue) {
     );
 
     if (!result) {
-        DbgLog("TS_ReadPhys1: FAILED at PA 0x%016llX: error %lu", physAddr, GetLastError());
+        // Don't log every failure - memory holes are expected
         return false;
     }
 
@@ -768,6 +752,9 @@ UINT64 TS_GetSystemCr3(PTS_CTX ctx) {
     const UINT64 systemMask = 0x0000FFFFFFFFFFFFULL;  // First 6 bytes
     const UINT64 systemStr  = 0x00006d6574737953ULL;  // "System"
 
+    int successCount = 0;
+    int failCount = 0;
+
     // Try common addresses first
     for (size_t i = 0; i < sizeof(commonAddresses)/sizeof(commonAddresses[0]); i++) {
         UINT64 baseAddr = commonAddresses[i];
@@ -775,7 +762,16 @@ UINT64 TS_GetSystemCr3(PTS_CTX ctx) {
 
         // Read ImageFileName at offset 0x5a8
         if (!TS_ReadPhys8(ctx, baseAddr + EPROCESS_IMAGE_FILE_NAME, &imageFileName)) {
+            failCount++;
             continue;
+        }
+
+        successCount++;
+
+        // Log first few successful reads to see what data we're getting
+        if (successCount <= 5) {
+            DbgLog("TS_GetSystemCr3: Read at 0x%llX: got 0x%016llX (as string: '%.8s')",
+                   baseAddr, imageFileName, (char*)&imageFileName);
         }
 
         if ((imageFileName & systemMask) == systemStr) {
@@ -792,18 +788,36 @@ UINT64 TS_GetSystemCr3(PTS_CTX ctx) {
                 DbgLog("TS_GetSystemCr3: Found SYSTEM CR3: 0x%016llX at phys 0x%016llX",
                        cr3, baseAddr);
                 return cr3;
+            } else {
+                DbgLog("TS_GetSystemCr3: Found 'System' at 0x%llX but CR3=0x%llX invalid",
+                       baseAddr, cr3);
             }
         }
+    }
+
+    DbgLog("TS_GetSystemCr3: Common scan: %d succeeded, %d failed (memory holes)",
+           successCount, failCount);
+
+    if (successCount == 0) {
+        DbgLog("TS_GetSystemCr3: All reads failed - driver may not work in this VM config");
+        TS_SetError(ctx, "All physical memory reads failed");
+        return 0;
     }
 
     DbgLog("TS_GetSystemCr3: Not found at common addresses, scanning 64KB-32MB...");
 
     // Scan first 32MB of physical memory (64KB start to avoid BIOS/firmware regions)
+    successCount = 0;
+    failCount = 0;
+
     for (UINT64 baseAddr = 0x10000; baseAddr < 0x2000000; baseAddr += 0x1000) {
         UINT64 imageFileName = 0;
         if (!TS_ReadPhys8(ctx, baseAddr + EPROCESS_IMAGE_FILE_NAME, &imageFileName)) {
+            failCount++;
             continue;
         }
+
+        successCount++;
 
         if ((imageFileName & systemMask) == systemStr) {
             UINT64 cr3 = 0;
@@ -819,7 +833,8 @@ UINT64 TS_GetSystemCr3(PTS_CTX ctx) {
         }
     }
 
-    TS_SetError(ctx, "Could not find SYSTEM process CR3");
+    DbgLog("TS_GetSystemCr3: Full scan: %d succeeded, %d failed", successCount, failCount);
+    TS_SetError(ctx, "Could not find SYSTEM process CR3 in %d readable pages", successCount);
     return 0;
 }
 
