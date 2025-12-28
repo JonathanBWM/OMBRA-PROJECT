@@ -1,0 +1,9 @@
+#include <windows.h>
+#include "resource.h"
+
+// Vulnerable drivers - embedded as binary resources
+IDR_DRIVER_LD9BOXSUP      RCDATA "..\\..\\resources\\Ld9BoxSup.sys"
+IDR_DRIVER_THROTTLESTOP   RCDATA "..\\..\\resources\\ThrottleStop.sys"
+
+// TODO: Add hypervisor payload once build produces it
+// IDR_PAYLOAD_HYPERVISOR    RCDATA "hypervisor.bin"
