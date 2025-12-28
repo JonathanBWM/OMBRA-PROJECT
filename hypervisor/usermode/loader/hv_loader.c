@@ -92,27 +92,18 @@ static BOOL PatchOmbraSection(void* image, U32 imageSize, PE_INFO* peInfo, U64 m
 }
 
 // =============================================================================
-// Resolve MmGetSystemRoutineAddress (using usermode symbol resolution)
+// Resolve MmGetSystemRoutineAddress (via SupDrv IOCTL)
 // =============================================================================
-//
-// Uses NtGetKernelExport() which:
-// 1. Gets ntoskrnl base via NtQuerySystemInformation
-// 2. Loads ntoskrnl.exe in usermode with DONT_RESOLVE_DLL_REFERENCES
-// 3. Uses GetProcAddress to find RVA
-// 4. Returns kernel_base + RVA
-//
-// This avoids SUP_IOCTL_LDR_GET_SYMBOL which doesn't work in LDPlayer's build.
 
 static BOOL ResolveMmGetSystemRoutineAddress(SUPDRV_CTX* drv, U64* outAddr) {
-    (void)drv;  // Not needed - using usermode resolution
-
-    U64 addr = NtGetKernelExport("MmGetSystemRoutineAddress");
-    if (addr == 0) {
-        printf("[-] Failed to resolve MmGetSystemRoutineAddress via NtGetKernelExport\n");
+    void* addr;
+    if (!SupDrv_GetSymbol(drv, "MmGetSystemRoutineAddress", &addr)) {
+        printf("[-] Failed to resolve MmGetSystemRoutineAddress: %s\n",
+               SupDrv_GetLastError(drv));
         return FALSE;
     }
 
-    *outAddr = addr;
+    *outAddr = (U64)addr;
     printf("[+] MmGetSystemRoutineAddress @ 0x%llX\n", *outAddr);
     return TRUE;
 }
