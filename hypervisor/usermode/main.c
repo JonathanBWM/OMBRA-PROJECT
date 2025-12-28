@@ -14,6 +14,7 @@
 #include "tests/detection_baseline.h"
 #include "byovd/supdrv.h"
 #include "byovd/deployer.h"
+#include "resources/resource_extract.h"
 
 // =============================================================================
 // Configuration
@@ -260,7 +261,10 @@ static bool FileExists(const wchar_t* path) {
     return (attr != INVALID_FILE_ATTRIBUTES && !(attr & FILE_ATTRIBUTE_DIRECTORY));
 }
 
-static wchar_t* FindDriverPath(void) {
+// Track if we extracted driver from resources (for cleanup)
+static wchar_t* g_ExtractedDriverPath = NULL;
+
+static wchar_t* FindDriverPath_Legacy(void) {
     static wchar_t path[MAX_PATH];
 
     // Strategy 1: Check known LDPlayer installation paths
@@ -288,6 +292,23 @@ static wchar_t* FindDriverPath(void) {
 
     // Driver not found in any location
     return NULL;
+}
+
+static wchar_t* GetDriverPath(void) {
+    // FIRST: Try to extract from embedded resources (the correct way)
+    if (Resource_Exists(EMBEDDED_DRIVER_LD9BOXSUP)) {
+        wchar_t* extracted = Resource_ExtractToTemp(EMBEDDED_DRIVER_LD9BOXSUP);
+        if (extracted) {
+            LOG("[+] Using embedded Ld9BoxSup.sys driver\n");
+            g_ExtractedDriverPath = extracted;  // Track for cleanup
+            return extracted;
+        }
+        LOG("[!] Resource exists but extraction failed\n");
+    }
+
+    // FALLBACK ONLY: Check filesystem (for development/debugging only)
+    LOG("[!] WARNING: No embedded driver, falling back to filesystem search\n");
+    return FindDriverPath_Legacy();
 }
 
 static void* LoadPayload(const char* filename, size_t* size) {
@@ -391,6 +412,19 @@ int main(int argc, char* argv[]) {
     }
     LOG("[+] Running with administrator privileges\n");
 
+    // Verify embedded resources are present (build sanity check)
+    LOG("[*] Verifying embedded resources...\n");
+    if (!Resource_Exists(EMBEDDED_DRIVER_LD9BOXSUP)) {
+        LOG("[!] WARNING: Ld9BoxSup.sys NOT embedded - falling back to filesystem\n");
+    } else {
+        LOG("[+] VERIFIED: Ld9BoxSup.sys is embedded\n");
+    }
+    if (!Resource_Exists(EMBEDDED_DRIVER_THROTTLESTOP)) {
+        LOG("[!] WARNING: ThrottleStop.sys NOT embedded - falling back to filesystem\n");
+    } else {
+        LOG("[+] VERIFIED: ThrottleStop.sys is embedded\n");
+    }
+
     // Run BigPool test if requested
     if (runBigPoolTest) {
         int result = RunBigPoolVisibilityTest();
@@ -398,13 +432,13 @@ int main(int argc, char* argv[]) {
         return result;
     }
 
-    // Find driver in known locations (LDPlayer paths, local directory)
-    LOG("[*] Searching for Ld9BoxSup.sys driver...\n");
-    wchar_t* driverPath = FindDriverPath();
+    // Get driver path (embedded resources first, filesystem fallback)
+    LOG("[*] Locating Ld9BoxSup.sys driver...\n");
+    wchar_t* driverPath = GetDriverPath();
     if (!driverPath) {
-        LOG("[-] Driver not found in any known location\n");
-        LOG("[!] Install LDPlayer 9, OR place Ld9BoxSup.sys next to this executable\n");
-        LOG("[!] Searched locations:\n");
+        LOG("[-] Driver not found in any location\n");
+        LOG("[!] Build error: Resources not embedded AND no filesystem driver found\n");
+        LOG("[!] Searched filesystem locations:\n");
         for (size_t i = 0; i < KNOWN_DRIVER_PATHS_COUNT; i++) {
             LOG("      - %ls\n", KNOWN_DRIVER_PATHS[i]);
         }
@@ -473,6 +507,18 @@ int main(int argc, char* argv[]) {
     // Unload hypervisor and cleanup
     HvLoaderUnload(&hvCtx);
     HvLoaderCleanup(&hvCtx);
+
+    // Cleanup extracted driver if we used embedded resources
+    if (g_ExtractedDriverPath) {
+        LOG("[*] Cleaning up extracted driver...\n");
+        if (Resource_Cleanup(g_ExtractedDriverPath)) {
+            LOG("[+] Extracted driver securely deleted\n");
+        } else {
+            LOG("[!] Warning: Failed to cleanup extracted driver\n");
+        }
+        free(g_ExtractedDriverPath);
+        g_ExtractedDriverPath = NULL;
+    }
 
     LOG("[+] Done\n");
     LogShutdown();
