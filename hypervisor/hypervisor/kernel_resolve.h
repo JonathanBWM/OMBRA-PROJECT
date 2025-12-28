@@ -54,6 +54,11 @@ typedef void* PDRIVER_OBJECT;
 typedef void* PFILE_OBJECT;
 typedef void* PMDL;
 
+// Calling convention
+#ifndef NTAPI
+#define NTAPI __stdcall
+#endif
+
 // =============================================================================
 // Function Pointer Types
 // =============================================================================
