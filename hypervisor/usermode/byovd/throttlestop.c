@@ -365,6 +365,15 @@ bool TS_ReadPhys8(PTS_CTX ctx, UINT64 physAddr, UINT64* pValue) {
     DWORD dwReturned = 0;
     UINT64 outputBuf = 0;  // Always 8 bytes for output
 
+    // DEBUG: Print exact parameters
+    static int debugCount = 0;
+    if (debugCount < 3) {
+        printf("[DEBUG TS_ReadPhys8] hDevice=%p IOCTL=0x%X inBuf=%p inSize=8 outSize=8 physAddr=0x%016llX\n",
+               ctx->hDevice, TS_IOCTL_PHYS_READ, &physAddr, physAddr);
+        fflush(stdout);
+        debugCount++;
+    }
+
     BOOL result = DeviceIoControl(
         ctx->hDevice,
         TS_IOCTL_PHYS_READ,
@@ -377,7 +386,14 @@ bool TS_ReadPhys8(PTS_CTX ctx, UINT64 physAddr, UINT64* pValue) {
     );
 
     if (!result) {
-        DbgLog("TS_ReadPhys8: FAILED at PA 0x%016llX: error %lu", physAddr, GetLastError());
+        DWORD err = GetLastError();
+        static int errCount = 0;
+        if (errCount < 5) {
+            printf("[DEBUG TS_ReadPhys8] DeviceIoControl FAILED: result=FALSE err=%lu dwReturned=%lu\n", err, dwReturned);
+            fflush(stdout);
+            errCount++;
+        }
+        DbgLog("TS_ReadPhys8: FAILED at PA 0x%016llX: error %lu", physAddr, err);
         return false;
     }
 
