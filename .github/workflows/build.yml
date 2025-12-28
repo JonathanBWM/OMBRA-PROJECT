@@ -49,19 +49,38 @@ jobs:
       shell: cmd
       working-directory: hypervisor/usermode
       run: |
-        echo Building usermode loader...
+        echo Compiling resources...
+        rc.exe /fo resources\loader.res resources\loader.rc
+        if %ERRORLEVEL% neq 0 exit /b 1
+        echo Resources compiled successfully
+
+        echo Building usermode loader with embedded resources...
         cl.exe /O2 /W4 /WX- /Fe:loader.exe ^
           main.c driver_interface.c payload_loader.c loader_api.c debug_reader.c ^
           loader/hv_loader.c loader/pe_parser.c loader/pe_mapper.c ^
           loader/pe_relocs.c loader/pe_iat.c loader/pe_imports.c ^
           loader/pe_utils.c loader/pe_wipe.c loader/drv_loader.c loader/cleanup.c ^
+          resources/resource_extract.c ^
           byovd/supdrv.c byovd/deployer.c byovd/crypto.c byovd/nt_helpers.c byovd/throttlestop.c ^
           tests/detection_baseline.c ^
-          /I../shared /I. ^
-          /link kernel32.lib advapi32.lib
+          /I../shared /I. /Iresources ^
+          /link kernel32.lib advapi32.lib resources\loader.res
         if %ERRORLEVEL% neq 0 exit /b 1
         echo Usermode loader built successfully
         dir *.exe
+
+    - name: Verify embedded resources
+      shell: cmd
+      working-directory: hypervisor/usermode
+      run: |
+        echo Verifying embedded resources in loader.exe...
+        dumpbin /RESOURCES loader.exe
+        dumpbin /RESOURCES loader.exe | findstr /C:"RCDATA"
+        if %ERRORLEVEL% neq 0 (
+          echo ERROR: No RCDATA resources found in loader.exe - resources not embedded!
+          exit /b 1
+        )
+        echo Resources verified successfully
 
     - name: Build hypervisor assembly
       shell: cmd
