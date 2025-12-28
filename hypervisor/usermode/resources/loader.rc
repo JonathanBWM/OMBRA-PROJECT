@@ -21,4 +21,5 @@ IDR_PAYLOAD_HYPERVISOR    RCDATA "..\\..\\resources\\hypervisor.sys"
 // OmbraDriver (Windows kernel driver for usermode communication)
 // - Loaded via standard SCM after hypervisor is active
 // - Communicates with hypervisor via VMCALL interface
-IDR_PAYLOAD_OMBRADRIVER   RCDATA "..\\..\\resources\\ombradriver.sys"
+// NOTE: Commented out until OmbraDriver build is integrated
+// IDR_PAYLOAD_OMBRADRIVER   RCDATA "..\\..\\resources\\ombradriver.sys"
