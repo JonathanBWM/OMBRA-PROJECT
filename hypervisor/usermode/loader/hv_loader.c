@@ -70,11 +70,11 @@ static BOOL PatchOmbraSection(void* image, U32 imageSize, PE_INFO* peInfo, U64 m
 
     // Print section info to verify it's not corrupted
     printf("[DEBUG] peInfo->SectionCount=%u (should be < 16)\n", peInfo->SectionCount);
-    printf("[DEBUG] ombraSection: Name='%.8s' VA=0x%X Size=0x%X RawOffset=0x%X\n",
+    printf("[DEBUG] ombraSection: Name='%.8s' VA=0x%X Size=0x%X FileOffset=0x%X\n",
            ombraSection->Name,
            ombraSection->Rva,
            ombraSection->VirtualSize,
-           ombraSection->RawDataOffset);
+           ombraSection->FileOffset);
     fflush(stdout);
     if (ombraSection->VirtualSize < sizeof(LOADER_OMBRA_BOOTSTRAP)) {
         printf("[!] .ombra section too small: %u bytes\n", ombraSection->VirtualSize);
